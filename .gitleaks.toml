@@ -16,3 +16,15 @@ regexes = [
   '''[a-z_]+_hex": "[0-9a-f]{32,64}"''',
   '''session_id": "[0-9a-f]{32}"''',
 ]
+
+[[allowlists]]
+description = "Redaction engine tests hold synthetic secret-shaped fixtures: the test table rows and one fake key block"
+targetRules = ["generic-api-key", "aws-access-token", "github-pat", "github-fine-grained-pat", "slack-bot-token", "slack-user-token", "stripe-access-token", "gcp-api-key", "sendgrid-api-token", "jwt", "private-key"]
+condition = "AND"
+paths = ['^internal/redact/redact_test\.go$']
+regexTarget = "line"
+regexes = [
+  '^\s*\{"[a-z0-9-]+", "[^"]{0,64}", "[^"]{0,64}", "[a-z]+"\},$',
+  '^\s*\{[`"][^`"]{0,80}[`"], [`"][^`"]{0,80}[`"]\},$',
+  '-----BEGIN [A-Z ]*PRIVATE KEY-----\\n[a-z0-9]{1,20}\\n-----END [A-Z ]*PRIVATE KEY-----',
+]

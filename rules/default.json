@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "name": "aws-access-key-id",
+      "category": "secret",
+      "regex": "\\b(?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\\b"
+    },
+    {
+      "name": "github-token",
+      "category": "secret",
+      "regex": "\\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\\b|\\bgithub_pat_[A-Za-z0-9_]{22,}\\b"
+    },
+    {
+      "name": "slack-token",
+      "category": "secret",
+      "regex": "\\bxox[abprs]-[0-9A-Za-z-]{10,}\\b"
+    },
+    {
+      "name": "stripe-key",
+      "category": "secret",
+      "regex": "\\b[sr]k_(?:live|test)_[0-9A-Za-z]{20,}\\b"
+    },
+    {
+      "name": "google-api-key",
+      "category": "secret",
+      "regex": "\\bAIza[0-9A-Za-z_-]{35}\\b"
+    },
+    {
+      "name": "sendgrid-key",
+      "category": "secret",
+      "regex": "\\bSG\\.[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}\\b"
+    },
+    {
+      "name": "jwt",
+      "category": "jwt",
+      "regex": "\\beyJ[A-Za-z0-9_-]{5,}\\.eyJ[A-Za-z0-9_-]{5,}\\.[A-Za-z0-9_-]{8,}\\b"
+    },
+    {
+      "name": "bearer-token",
+      "category": "token",
+      "regex": "(?i)\\bbearer\\s+([A-Za-z0-9_\\-.=+/]{16,})",
+      "group": 1
+    },
+    {
+      "name": "basic-auth-header",
+      "category": "secret",
+      "regex": "(?i)\\bbasic\\s+([A-Za-z0-9+/=]{8,})",
+      "group": 1
+    },
+    {
+      "name": "basic-auth-url",
+      "category": "secret",
+      "regex": "://[^/\\s:@]*:([^/\\s@]+)@",
+      "group": 1
+    },
+    {
+      "name": "generic-assignment",
+      "category": "secret",
+      "regex": "(?i)(?:^|[^A-Za-z0-9])[A-Za-z0-9_-]*?(?:api[_-]?key|apikey|api[_-]?secret|secret|token|passw(?:or)?d|pwd|passphrase|credentials?|auth(?:orization)?|access[_-]?key|private[_-]?key|signing[_-]?key|encryption[_-]?key|client[_-]?secret|session[_-]?id|cookie)(?:[_-]?(?:key|id|hash|value|str(?:ing)?))?\\b[\"']?\\s*[:=]\\s*[\"']?([^\\s\"'`,;&()\\[\\]{}<>]{8,})",
+      "group": 1
+    },
+    {
+      "name": "ipv4",
+      "category": "ip",
+      "regex": "\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b"
+    },
+    {
+      "name": "ipv6",
+      "category": "ip",
+      "regex": "(?i)\\b(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}\\b|\\b(?:[0-9a-f]{1,4}:){1,6}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5})?|::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?"
+    },
+    {
+      "name": "email",
+      "category": "email",
+      "regex": "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b"
+    },
+    {
+      "name": "phone",
+      "category": "phone",
+      "regex": "(?:\\+|\\b00)[1-9]\\d{0,2}[\\s.-]?\\(?\\d{1,4}\\)?(?:[\\s.-]?\\d{2,4}){2,4}\\b",
+      "enabled": false
+    }
+  ],
+  "keep": [
+    "127.0.0.1",
+    "0.0.0.0",
+    "::1",
+    "localhost"
+  ]
+}

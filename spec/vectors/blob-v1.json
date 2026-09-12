@@ -1,0 +1,73 @@
+{
+  "chunk_size": 1048576,
+  "labels": {
+    "chunk_key": "chunk-key",
+    "manifest_key": "manifest-key"
+  },
+  "salt": "aken/blob/v1",
+  "vectors": [
+    {
+      "chunk_count": 1,
+      "chunk_key_hex": "01279da0e1dcd019b148479597177c9bc7cc4efe6d3a02d3bd613e5f35adebf3",
+      "chunks": [
+        {
+          "ciphertext_hex": "9791e97cdd8359d2434f869a49fa4479a0",
+          "index": 0
+        }
+      ],
+      "content_root_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "manifest_ciphertext_hex": "329246735035e42acdbab0f19d671d8c39f074e49fca13d9af8ac65367939cc42fc63e14d6dd42e50279ca18d0559c71dc77946447306fb1c986819e85e9afa3ed1cbb4d8ac99653836bfba52cd49b6f696478531a79de4d28f7b3cb7d3a14ac2a6d30b568037aec8a1e930a2a65eac26476d72531a61e2fe1cca0daa58c81e2a54ba64bf9efaa0388d7aa358e097df0fbc0479b7caa5bcb5d7cd12e8eb8e76eed43da2c694fe2037653a1f02b46c045d94d5d9eb6fe58fdd082d23375a21593a06fb12644bcc2357266a3b34efeac70dec57e213fca6a989edd6e4d3dabfbe9a336922e4cd40ff1a19e21349835510634a9c9e4e0b192c3d3acdd15e5027c49553b2157520e7827be91ec598d4c4c028d14df0da9561b11b08f20a1fd143e885fc967808b874589eb162088266cac8f3a04f80b286ca28eb78843e6e91268bf4d353759b8d4a42ffa4363b459932768311fb3ec14f3b1bd838445e38b5ce10f9fe6b919364b5133bf6a56a8619c43fc1d53244b58cb599e9bb319647dca10b50aaefc3df351ac02498800aca1dc29d382f04a5a6c2bb5642721548fcd301e23458b0867a633f0e9a15f0a5de16816929cad6954ed4888dde3c7c7fda4ff3509",
+      "manifest_json": "{\"version\":1,\"created_at\":\"2026-09-12T00:00:00Z\",\"collector\":\"aken v0.1.0-test\",\"chunk_size\":1048576,\"chunk_count\":1,\"total_bytes\":1,\"chunks_sha256\":[\"a79a64ea3f9f3f4c364fb3bfa843b1a3973bdb904b1903d46fd97840eaf69ab5\"],\"sources\":[{\"name\":\"file:/var/log/vector.log\",\"kind\":\"file\",\"target\":\"/var/log/vector.log\",\"offset\":0,\"bytes\":1,\"lines\":0,\"lines_redacted\":0}],\"redaction\":{\"lines_redacted\":0,\"by_category\":{},\"flags\":0,\"rules\":14}}",
+      "manifest_key_hex": "baf3a0e85270c093b461adb82530f4ab059ba905e1c1e4e528389a563243f09b",
+      "name": "one byte, content root of zero bytes",
+      "plaintext": {
+        "generator": "byte i = (7*i + 3) mod 251",
+        "length": 1
+      }
+    },
+    {
+      "chunk_count": 1,
+      "chunk_key_hex": "ddd960ceba2f57561299837c07bd52d4e6034be0e66e6dc90c73ebf8afe7d135",
+      "chunks": [
+        {
+          "ciphertext_prefix_hex": "0b2f008961f10225c799782e6aedb363f7c4a8c98c5fb9a77703976747733ba8",
+          "ciphertext_sha256": "ba9abf24a5e1d5ff61e3ab8c7b5d620d5cdc9b29d3ac030fbea4b1dad817ca05",
+          "index": 0
+        }
+      ],
+      "content_root_hex": "99e568e482f247c907aeeedf256d2d7bcb730b1e28ad5fcac24b4a58936fef36",
+      "manifest_ciphertext_hex": "16dc4210f87ef8b812057e5cd33724ea800f5ef64ae5f727d9fbe45d12d6fbce6de28274daf5d0a3518c7271db2ea69557c6d4ed06674336c11f9b9ffc90ac620b4dd43cadce1fb85ec5e3c5f97d117cc9c4fb85d28e731dbe80c62cd17a3952955a7417d68a3e18226995be5b2fc166b67b75e600fb16c1c36e4bd000c4635e358c953ec283e54476c777b4e152413f5482ad94814262fb1d021a2ed44ea75a0d7577be497efc471996753fe1e538c0ee39cab3298368edea3f2905dec200ee9022de8efdb4446ccce8df69ddb981384fc75c4399db1576c9f4ad636db294abe12acd78302cde2da995854c886bd6206738c013ef6bd73d02127991f8758446d475387884693ca326e01c9dab3c04e80af2b239fbefb887810be134c69e2de38d746b70e74dd12144a184637aaccbe7cd73a37d491e059714705f4ef226e364dee89f6feb978b450a999061c6b3ed24b3e8fa323cd0f20460cd17ee67b9957dfcb6054f0d717528ed8b195791dab8e0386a92fdca684981f15c109f1a702a67c8df937a60b820ee12650a25eb48c505490dd13a530cc293671cbbe8e02ec4c45f9ac25f4e35cb8533e3dc85987e636c124b0f8e82f8ed8cfc957b98b7aa4c53c6de739a7f8ba732c7e2f3a3",
+      "manifest_json": "{\"version\":1,\"created_at\":\"2026-09-12T00:00:00Z\",\"collector\":\"aken v0.1.0-test\",\"chunk_size\":1048576,\"chunk_count\":1,\"total_bytes\":1048576,\"chunks_sha256\":[\"ba9abf24a5e1d5ff61e3ab8c7b5d620d5cdc9b29d3ac030fbea4b1dad817ca05\"],\"sources\":[{\"name\":\"file:/var/log/vector.log\",\"kind\":\"file\",\"target\":\"/var/log/vector.log\",\"offset\":0,\"bytes\":1048576,\"lines\":0,\"lines_redacted\":0}],\"redaction\":{\"lines_redacted\":0,\"by_category\":{},\"flags\":0,\"rules\":14}}",
+      "manifest_key_hex": "64968fc3c0ba18f03f210259418d8a090c55842d0149d7a2e7007870664cb99a",
+      "name": "one full chunk, hashed content root",
+      "plaintext": {
+        "generator": "byte i = (7*i + 3) mod 251",
+        "length": 1048576
+      }
+    },
+    {
+      "chunk_count": 2,
+      "chunk_key_hex": "b4d1ec75ebe88ec70ab0d573aaf49e5db08569b4ba1fe048812bf542925f69d8",
+      "chunks": [
+        {
+          "ciphertext_prefix_hex": "0eecced7c854b9dd28ac3c05eb80894d1a501f435fd15485360b4f6b83ddd125",
+          "ciphertext_sha256": "d13d95667d00fb862d591654e83e251740c33070ce35ac7a7ad78cf8027908be",
+          "index": 0
+        },
+        {
+          "ciphertext_hex": "f19e66af7998a3b42fae08aea8f03f5f786bf5bf42cd4d7af556c9faa910baa670473de00ab292d673fc10aca46ddd9a1e86ec54a45fb6c6f07676ee645be2a2dc439b49fe4526078349a2e4781c41086e73dccdfef6d677a1986ac39cc20ae850f4d3e12d4ac35ecc710e1087959f848f2258e03ebb67ad3dcb4fa3b979145094467063b64949cd6d1020db52a66bf2aa0213cf760d5ea61f958c7716dfe6fc5b7396b01c0c0beae26317c16b71f1287ca36a0bcf0e3f03d7bd232eba7e0f172112e1e7892de3bd48d9c625fafad2966383a3efc33c21268bc53413573199fa6a6e66b4e32350a86ade406bc61df25e1946a257fedcc495f9bda3fd7bda30d95625262c3c6449085302b470fcf87c344636e438e4ff6795a2f11c090939e00f01a8b9f41de5682d6a2053a52e0a8ca70cd0ee89af8de5afcd84e993f39a77b0a8fd7d485679c399c79e3be314c35cc8beeeff876e772b627c897cb2715adc37e19b63b514b3c0a28508fc292677922ef3152de258cb4c697472c6852f49e74a34bb6b0da0231ac119c918682236ff9460e12fc7c14d917ea956a50be1a80bab9f740f2ff3320df8e1488580f00960804cbef99494b98c945a8d1a93fdd71143f0062a94b9d08bbdf574dca2301258ce89f66ca8881cc3adc3e0e4cb8569d688175bbfdd390044151288bcd5973b721aa86a486d5da59a1c624313f0fa290687f5c918e53babe62dd66bdb2f56463c374cc1bed295bc8849b6b731477a80270cc80b6f8fdf6b1f668441ee91f95325220b8671af53cc4ae75ec99021c5d620ae05253e4e836c52e177409191fec2d4308c4dc43b95b229ad86186a4e31f1538f38aa83f124213b64f570735e7cdc083b0b4abb60798640b50acdb863756b3d17bfeaead76d8289cf40c6bf530658c29806f3e0f6eee67de18d4f6f7b5f5f4a8321fa9c42ffb7cd53a8c4a24a36bfab872c8a8a80bf34869cdcfe4264bb83128e0d48e82f98e6749ed12405cfd096dd0450546aad67db14b80cfe101b9776c3d1ff32ef7f7d9258fb7b7deeae2353166eb8b6ea2d893d50ebaeacefa8ee1e9a36e19dff585a78b4d89b3868a96175c1f1e127288ee3ded6b8c42237ddef41f96095be4e0bb92f4a32fbdaaa8345cb15dc8d229cfbcb83d500d9ba1184f447211a667a968689d3cc75d2d27725b81f147a01a3ada2b5d845231da4e84fff87957a5d176b56a860d155ad42925d3386b378bdbd58531ea25d0b697f64b6edaa0ad7ab34da40ea8575fd247802ebb8d00cd5ec843b0d4c7c6057f2c5888a5d49c0e26820c6db15aa43f6edbca604b2326983a4907811ae9c78ea8b574f7855733feedd08b7e5be4e4da736d85f6ebb6ae27eb904e8d7294885b23c6b2bace67f813516553e39b6e21ec4c5e17a6d576d4060dc2caf4e52917812",
+          "index": 1
+        }
+      ],
+      "content_root_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "manifest_ciphertext_hex": "608d6da8b24b5fe6f0695403c3e7001c86a96fceccb105d35b09ac7690be96c505769726f94986cac6fcca764add5ec51e6ac4a7822f693810a7c585be98463c6d6e91f022ec94332e5af100902d2cb100d867b7cfc3f9adb63c5da0a6f9cc2e3a8876afe0d9454e10f05f138a0c07f8c1c1568c818b74e489b2571e9d4a9a20978c7a960d50742012450d6dbe9cb1b5fae34f834b06e635d4148fbe5c25a0106fa7aef3ff7d9c9e517ef9d48a66a8afe3c2ccf84a6f1d5b59eac40f033aaf32289a6f9d9391514d61ebf5eef302f45db22b8474fe55c3588b25a65b227a4cf44b25eb6c31d658039a73da964602875b38e7146b0f4dee5be0c465fb11c5db10c722e75ac607a93d69be34bcbd8d663fc8d1fa0adde2a4acbb35b31ead7595a1c399b08cef035f93466b342962d50bb65cc196f11134ba8e13560e4b763a5278f934ade1ab8da04197dab1420f4cc176d344a5f5a9418523b106e03891d00bc8dc1b26083ae8668825c750e1bb21976eacbef50e25dae151e5d90535d58c92cbfd3a1573ed5964ca7227a1a9fea13c13e4bd8905b6fdb74161a9bf6334d9e10b675ec7b895404e8fbc224e8a51b38c25191933d278e64e24795ad430487ac0e7ed4a9e8fb9c32636c4cd1330cc9c716c92984886ae1629144dee80e1a841d7e6e64a8ee28a90c0e3d69dfb0dd82b5513bf3aeced0a7f7cbdb4b64470a7f9582c962fe6434d0aa03d47a91914d52b65",
+      "manifest_json": "{\"version\":1,\"created_at\":\"2026-09-12T00:00:00Z\",\"collector\":\"aken v0.1.0-test\",\"chunk_size\":1048576,\"chunk_count\":2,\"total_bytes\":1049576,\"chunks_sha256\":[\"d13d95667d00fb862d591654e83e251740c33070ce35ac7a7ad78cf8027908be\",\"103eabdb0df48ceb02d197aac89bd06acdd2a35f26cc3728d445cd5d9c0114d0\"],\"sources\":[{\"name\":\"file:/var/log/vector.log\",\"kind\":\"file\",\"target\":\"/var/log/vector.log\",\"offset\":0,\"bytes\":1049576,\"lines\":0,\"lines_redacted\":0}],\"redaction\":{\"lines_redacted\":0,\"by_category\":{},\"flags\":0,\"rules\":14}}",
+      "manifest_key_hex": "469187ff6f036df3147234923d14f992a02ff9f2e2228e14f393f6cc6aa2e70b",
+      "name": "two chunks, sequential content root",
+      "plaintext": {
+        "generator": "byte i = (7*i + 3) mod 251",
+        "length": 1049576
+      }
+    }
+  ]
+}
