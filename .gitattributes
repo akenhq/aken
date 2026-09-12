@@ -1,0 +1,2 @@
+# Every text file is stored and checked out with LF, whatever the editor or OS does.
+* text=auto eol=lf
