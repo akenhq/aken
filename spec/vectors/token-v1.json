@@ -1,0 +1,91 @@
+{
+  "format": "aken token v1",
+  "kdf": "HKDF-SHA256",
+  "salt": "aken/token/v1",
+  "labels": {
+    "content_root": "content-root",
+    "relay_credential": "relay-credential",
+    "session_id": "session-id"
+  },
+  "lengths": {
+    "content_root": 32,
+    "relay_credential": 32,
+    "session_id": 16
+  },
+  "valid": [
+    {
+      "content_root_hex": "10f342adaf014edf315d24ebbdcb98be7747d6a3d01acdca6ae4e6caaebbbecb",
+      "name": "all zero bytes",
+      "relay_credential_hex": "f155b5bb37832427b80be371c342cd13881f5c3e4c84a3824fbf52c1b6e57fe7",
+      "secret_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "session_id": "94d74629849d564425fc1737a1388e6d",
+      "token": "akn1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "content_root_hex": "51616e30047d79c269cb0536afad8fba9748562e21c95dcbdea61c256b2c98c6",
+      "name": "all 0xff bytes",
+      "relay_credential_hex": "3e5e48b811e0ea93b8fb9ea620362ca6be6bba702f31a491e4b2df99e66c9bfd",
+      "secret_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "session_id": "320a68b75c6d43a92a570aeecc57053e",
+      "token": "akn1_777777777777777777777777777777777777777777777777777q"
+    },
+    {
+      "content_root_hex": "630cdfa88398ff70b57a076dc8be321278d8b71867ee2d5f64ccf3968e53d093",
+      "name": "bytes 0x00 to 0x1f in order",
+      "relay_credential_hex": "62c61fecf784d7ec02a47e2167ac7498ae4838f8ad188fbf7c5bd7b02ef9edcc",
+      "secret_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "session_id": "6c6c71b5d8394e337347f05e26a28513",
+      "token": "akn1_aaaqeayeaudaocajbifqydiob4ibceqtcqkrmfyydenbwha5dypq"
+    },
+    {
+      "content_root_hex": "f33e18ee114de1b1f14dbef2f92179194b5faf37cc6aa63320dbe6af124f6061",
+      "name": "sha256 of the ASCII string 'aken test vector 4'",
+      "relay_credential_hex": "fc9ac4991ffe496351c98acf230e87b83a277721a764c1b44db9bceb685caec0",
+      "secret_hex": "c935225b000ec817fe2f6341c071b9f2e560b7663ddcdb506c64af222ab3dfa0",
+      "session_id": "45df2145e4ffeb9195547a2f26f466b2",
+      "token": "akn1_ze2sewyab3ebp7rpmna4a4nz6lswbn3ghxonwudmmsxsekvt36qa"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "empty",
+      "token": ""
+    },
+    {
+      "name": "wrong prefix",
+      "token": "akn2_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "name": "uppercase prefix",
+      "token": "AKN1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "name": "uppercase body",
+      "token": "akn1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    },
+    {
+      "name": "one character short",
+      "token": "akn1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "name": "one character long",
+      "token": "akn1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "name": "character outside the alphabet",
+      "token": "akn1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"
+    },
+    {
+      "name": "non-canonical trailing bits",
+      "token": "akn1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab"
+    },
+    {
+      "name": "whitespace inside the body",
+      "token": "akn1_aaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "name": "prefix only",
+      "token": "akn1_"
+    }
+  ]
+}
