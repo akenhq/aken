@@ -36,7 +36,9 @@ records the intended design; its open items must be resolved before implementati
 [vectors/token-v1.json](vectors/token-v1.json) contains four valid tokens with
 secrets and derived outputs, ten invalid tokens, and the KDF labels, salt and
 output lengths. [protocol/token_test.go](../protocol/token_test.go) reads this
-file to check the implementation.
+file to check the implementation. CI's secret scanner treats vector-shaped values
+in this directory as public test data; `.gitleaks.toml` at the repository root
+says exactly which shapes, and nothing else is exempt.
 
 ## Proposing a change
 
