@@ -114,6 +114,10 @@ for g in adm systemd-journal; do
 done
 ```
 
+Optionally, create `/etc/aken/rules.json` as root for site-specific redaction
+rules and make it readable by `aken`. See [Redaction](redaction.md) for the
+format and how to check your rules before uploading.
+
 ## Or use the install script
 
 Download `packaging/install.sh` from the same tag, read it, then run it:
@@ -153,10 +157,12 @@ Homebrew and npm come later.
 
 ## Run
 
-Run the collector as the `aken` user:
+Run a smoke test as the `aken` user. Replace `<unit>` with a journald unit:
 
 ```sh
-sudo -u aken aken collect --help
+sudo -u aken aken collect --dry-run --unit <unit>
 ```
 
-In phase 0, that is all it does.
+This collects, redacts, and shows the review screen without uploading.
+See [Collect logs](collect.md) to send an artifact and
+[Docker logs](docker.md) to configure container logging.

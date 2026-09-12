@@ -1,7 +1,9 @@
 # Threat model
 
-Status: this document describes the design. In phase 0, nothing below exists
-except the token format. See [README.md](README.md) for what works today.
+Status: phase 1 implements one-shot mode. Jobs, approvals, and persistent
+sessions do not exist yet. The one-shot section describes current behavior;
+the remaining design includes controls for later phases, including background
+mode. See [README.md](README.md) for what works today.
 
 ## What Aken is
 
@@ -27,6 +29,44 @@ structured observations, and a small process on the server decides what leaves i
 - An attacker with the developer machine holds session keys and can read what
   the session reads until the session ends.
 
+## One-shot mode (phase 1)
+
+One artifact leaves the server: redacted lines encrypted with keys derived
+from a fresh session token. The relay sees ciphertext, sizes, the session id,
+and the TTL. It does not receive the plaintext or the token.
+
+Anyone with the token can read the artifact until it expires. Keep the token
+out of chats, shell history, and tickets. The collector prints it once in the
+terminal and does not store it. The local MCP stores it on your machine in
+`~/.config/aken/session.json` on Linux or `~/Library/Application Support/aken/session.json`
+on macOS, with directory mode `0700` and file mode `0600`. Ending the session deletes the relay artifact and that file.
+
+Before upload starts, the collector creates
+`<state-dir>/runs/<YYYYMMDDTHHMMSSZ>-<first 8 hex of session id>/` with mode
+`0700`. It writes each file once, then sets its mode to `0400`:
+
+| File | Contents |
+|---|---|
+| `artifact.txt` | Exactly the plaintext bytes that were encrypted and uploaded |
+| `manifest.json` | The plaintext manifest, indented |
+| `mapping.json` | Placeholders mapped to original values, including sensitive data |
+| `run.json` | `session_id`, `relay`, `created_at`, `expires_at`, `chunk_count`, and `argv` |
+
+Local copies default to `/var/lib/aken` when writable, otherwise
+`$XDG_STATE_HOME/aken` or `~/.local/state/aken`. They remain after relay expiry.
+Before a real run, `--retention` prunes copies older than its duration; the
+default is `720h` (30 days), and `0` keeps everything. Dry runs write and
+prune nothing.
+
+The collector runs unprivileged and refuses root. It runs `journalctl` with
+a fixed argument list and no shell. It reads files only under `/var/log` and
+`--allow` directories through `os.Root`, refusing symlinks that leave them.
+
+The review screen shows exactly the plaintext bytes to be encrypted and sent.
+Its line-number gutter is display only. Review can catch values the rules
+missed; redaction remains defence in depth. Everything the agent reads goes
+to the LLM provider.
+
 ## Threats and controls
 
 | Threat | Control | Where enforced |
@@ -41,7 +81,7 @@ structured observations, and a small process on the server decides what leaves i
 | A token leaks | The human enters it outside the agent conversation by default. Chat joining requires explicit opt-in and exposes the token to the transcript. Tokens are short-lived and single-use, and never enter the relay, logs, or local audit copy. | Collector, local MCP, and human operator |
 | Symlink or path escapes in file jobs | Configured scope, canonical paths, and `os.Root` prevent escapes, including symlink races. The human approves resolved paths. | Collector |
 | Token brute force against the relay | Long random tokens of at least 128 bits, unguessable identifiers, token-derived relay credentials stored as hashes, no listing or enumeration endpoints, and rate limits. | Collector and local MCP derive credentials; relay checks credentials and limits |
-| The relay becomes a log store or free file drop | Ephemeral blobs, payload and blob size caps, session lifetime caps, per-IP and per-account rate limits, abuse monitoring, and accounts for persistent sessions. Defaults and caps are to be set later. | Relay |
+| The relay becomes a log store or free file drop | Ephemeral blobs, payload and blob size caps, session lifetime caps, per-IP and per-account rate limits, abuse monitoring, and accounts for persistent sessions. Phase 1 allows 128 MiB per artifact, with a TTL default of 4 h and a cap of 24 h. | Relay |
 
 ## What Aken does not protect against
 

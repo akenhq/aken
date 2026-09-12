@@ -28,13 +28,15 @@ vet:
 lint:
 	golangci-lint run ./...
 
-# Phase 0 dependency budget: the server binary and the dev relay link nothing outside the
-# standard library. DEPENDENCIES.md explains the budget; this target enforces it.
+# Dependency budget (DEPENDENCIES.md): the collector may link golang.org/x/term and its dependency
+# golang.org/x/sys besides the standard library; the dev relay links nothing outside it.
 depcheck:
-	@for p in ./cmd/aken ./cmd/aken-devrelay; do \
-	  deps=$$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' $$p | sed '/^$$/d' | grep -v '^$(MODULE)/' || true); \
-	  if [ -n "$$deps" ]; then echo "$$p links packages outside the standard library:"; echo "$$deps"; exit 1; fi; \
-	done
+	@check() { \
+	  deps=$$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' $$1 | sed '/^$$/d' | grep -v '^$(MODULE)/' | grep -Ev "$$2" || true); \
+	  if [ -n "$$deps" ]; then echo "$$1 links packages outside its budget:"; echo "$$deps"; exit 1; fi; \
+	}; \
+	check ./cmd/aken '^golang.org/x/(term|sys)(/|$$)'; \
+	check ./cmd/aken-devrelay '^$$'
 	@echo "depcheck: ok"
 
 release:

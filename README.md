@@ -3,25 +3,28 @@
 Let your coding agent investigate production without giving it production access.
 
 A small collector runs on your server as an unprivileged user, makes outbound
-HTTPS requests only, and runs jobs from a fixed catalog. Logs are redacted on the
-server, shown to you, then encrypted and uploaded to a zero-knowledge relay with
-a short TTL. A local MCP server on your machine gives your coding agent search,
+HTTPS requests only. Logs are redacted on the server, shown to you, then
+encrypted and uploaded to a zero-knowledge relay with a short TTL. A local MCP server on your machine gives your coding agent search,
 tail and context tools over that artifact. The agent never gets a shell, an SSH
 key or a network path to your server.
 
-**Status:** phase 0. The binaries build, print help and refuse to do anything
-else. The protocol and the code have not been professionally reviewed.
+**Status:** phase 1, one-shot mode. `aken collect` uploads one redacted,
+encrypted artifact, and `aken-mcp` serves read-only tools over it. Persistent
+sessions, approvals, and the job catalog are later phases. The protocol and
+the code have not been professionally reviewed.
 
 ## What is in this repository
 
 | Path | Contents |
 |---|---|
-| `cmd/aken` | Collector command stub; refuses to collect as root |
-| `cmd/aken-mcp` | Local MCP command stub |
-| `cmd/aken-devrelay` | Development relay command stub |
-| `protocol/` | Token format and key derivation using only the standard library |
-| `spec/` | Protocol specifications and token test vectors |
-| `internal/` | Shared build version information |
+| `cmd/aken` | Collector |
+| `cmd/aken-mcp` | Local MCP |
+| `cmd/aken-devrelay` | In-memory relay for development |
+| `protocol/` | Tokens, artifacts, and relay client |
+| `internal/` | Collector, redaction, MCP, and dev relay packages |
+| `rules/` | Default redaction rules |
+| `spec/` | Specifications, vectors, and the conformance suite |
+| `docs/` | User docs |
 | `.github/workflows/` | CI checks and signed, reproducible releases |
 
 ## Build
@@ -42,11 +45,48 @@ tests, the dependency check and the reproducibility check.
 
 See [docs/install.md](docs/install.md) to install and verify a release.
 
+## Quick start
+
+After [installing and verifying](docs/install.md), run this on the server:
+
+```sh
+sudo -u aken aken collect --unit nginx --since 1h
+```
+
+The review screen runs in the server terminal. Review the redacted content,
+then choose **send** to encrypt and upload it.
+
+On your machine, run this and paste the printed token at the prompt:
+
+```sh
+aken-mcp join
+```
+
+Register the MCP with Claude Code:
+
+```sh
+claude mcp add aken -- aken-mcp serve
+```
+
+Check the session and its expiry:
+
+```sh
+aken-mcp status
+```
+
+## Docs
+
+- [Install and verify](docs/install.md)
+- [Collect logs](docs/collect.md)
+- [Docker logs](docs/docker.md)
+- [Redaction](docs/redaction.md)
+- [Use the local MCP](docs/mcp.md), including Claude Code, Codex CLI, and Cursor
+
 ## Security
 
 Read [SECURITY.md](SECURITY.md) for reporting vulnerabilities and
 [THREAT-MODEL.md](THREAT-MODEL.md) for the trust boundaries and risks.
-Redaction is defence in depth, not a guarantee.
+Redaction is defence in depth and can miss sensitive data.
 
 ## Contributing
 
