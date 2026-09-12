@@ -1,0 +1,18 @@
+# gitleaks configuration for CI. The default rules stay in force.
+# The only exemption is for the protocol test vectors: deterministic public values in
+# exactly the shape spec/token.md defines, matched by the generic-api-key rule. Every
+# other rule still applies inside spec/vectors, and every rule applies everywhere else.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Protocol test vectors under spec/vectors are public by design"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^spec/vectors/[a-z0-9-]+\.json$''']
+regexTarget = "match"
+regexes = [
+  '''token": "akn1_[a-z2-7]{52}"''',
+  '''[a-z_]+_hex": "[0-9a-f]{32,64}"''',
+  '''session_id": "[0-9a-f]{32}"''',
+]
