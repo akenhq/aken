@@ -20,6 +20,7 @@ const (
 type Spec struct {
 	Kind   Kind
 	Target string
+	Match  string
 }
 type Source struct {
 	Spec

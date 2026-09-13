@@ -4,6 +4,7 @@ package collect
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -38,7 +39,7 @@ Redaction   12 rules (12 default); kept: 10.0.0.5; off: email
   email        off
   1 of 2 lines changed
 
-Flags   1 high-entropy strings matched no rule: unit:api lines 2. View them before sending.
+Flags   1 string to inspect: unit:api lines 2. Press f to view the lines to inspect.
 
 Upload   2 lines, 1.0 KiB, 1 chunk, TTL 4h, relay https://relay.aken.dev
 Local    /var/lib/aken/runs/ (kept 30 days; includes the placeholder mapping)
@@ -158,6 +159,46 @@ func TestReviewEscapes(t *testing.T) {
 		}
 		if bytes.Contains(out.Bytes(), original) || !bytes.Equal(result.Lines[0], original) {
 			t.Fatal("viewer exposed controls or changed artifact bytes")
+		}
+	}
+}
+
+func TestFlagsScreenAndView(t *testing.T) {
+	for _, tt := range []struct {
+		inspect int
+		ids     int64
+		want    string
+	}{
+		{0, 0, "Flags   none"},
+		{0, 1, "Flags   0 strings to inspect; 1 hex id or hashes not listed."},
+		{25, 2, "Flags   25 strings to inspect: unit:api lines 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20 and 5 more; unit:worker lines 1; 2 hex ids or hashes not listed. Press f to view the lines to inspect."},
+	} {
+		s := testScreen()
+		s.sources[0].lines, s.sources[0].flags = nil, nil
+		for i := 1; i <= tt.inspect; i++ {
+			s.sources[0].lines = append(s.sources[0].lines, []byte(fmt.Sprintf("inspect %d", i)))
+			s.sources[0].flags = append(s.sources[0].flags, redact.Flag{Line: i, Value: fmt.Sprint(i)}, redact.Flag{Line: i, Value: "duplicate"})
+		}
+		for i := int64(0); i < tt.ids; i++ {
+			s.sources[0].lines = append(s.sources[0].lines, []byte("id only"))
+			s.sources[0].flags = append(s.sources[0].flags, redact.Flag{Line: len(s.sources[0].lines), IDShaped: true})
+		}
+		if tt.inspect > 0 {
+			s.sources = append(s.sources, screenSource{manifest: protocol.ManifestSource{Name: "unit:worker"}, lines: [][]byte{[]byte("inspect again")}, flags: []redact.Flag{{Line: 1}}})
+		}
+		s.manifest.Redaction.Flags, s.idFlags = int64(tt.inspect), tt.ids
+		for _, command := range []string{"f", "v"} {
+			var out bytes.Buffer
+			_, err := review(bufio.NewReader(strings.NewReader(command+"\ns\n")), &out, s, false, 100)
+			if err != nil || !strings.Contains(out.String(), tt.want+"\n") {
+				t.Fatalf("screen = %s, error = %v", out.String(), err)
+			}
+			if strings.Contains(out.String(), "id only") != (command == "v" && tt.ids > 0) {
+				t.Fatalf("incorrect id filtering: %s", out.String())
+			}
+			if tt.inspect > 0 && !strings.Contains(out.String(), "unit:api:25 ! inspect 25") {
+				t.Fatalf("viewer truncated inspected lines: %s", out.String())
+			}
 		}
 	}
 }
