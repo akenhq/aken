@@ -58,11 +58,37 @@ Replace `<name>` with the container name. Check journal access as `aken`:
 sudo -u aken journalctl CONTAINER_NAME=<name> -n 5
 ```
 
-Then check collection and redaction:
+Then check collection and redaction. `--container` accepts the service name
+as it appears in the journal, including a short name followed by `.`, `_`, or
+`-` in the full name. For example, the Swarm service `stack_api` can match
+`stack_api.1.abc123` and other tasks. An exact name takes precedence; otherwise,
+all matching names become separate sources:
 
 ```sh
-sudo -u aken aken collect --container <name> --dry-run
+sudo -u aken aken collect --container stack_api --dry-run
 ```
+
+You can also pass a 12- or 64-character hex container ID. If no name matches,
+collection stops before reading with this error:
+
+```text
+no container named "NAME" in the journal; known names: a, b, c
+```
+
+The error lists up to 20 known names, sorted. Use a listed name or its service
+prefix. To list all names as `aken`, run:
+
+```sh
+sudo -u aken journalctl --no-pager -q -F CONTAINER_NAME
+```
+
+If the journal knows no containers, the error gives a setup hint:
+
+```text
+no container logs in the journal; is the docker logging driver journald? See docs/docker.md
+```
+
+Configure the journald driver as described above and recreate the containers.
 
 See [Collect logs](collect.md) for time windows and the review screen.
 
