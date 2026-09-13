@@ -98,7 +98,7 @@ func TestRunValidation(t *testing.T) {
 func TestUploadRoundTrip(t *testing.T) {
 	for _, large := range []bool{false, true} {
 		t.Run(fmt.Sprint(large), func(t *testing.T) {
-			body := "from 203.0.113.5 password=abcdefgh\n"
+			body := "from 203.0.113.5 password=abcdefgh\n" + strings.Repeat("0123456789abcdef0123456789abcdef aB3dE5gH7jK9mN1pQ2sT4vW6\n", 2)
 			if large {
 				body += strings.Repeat("ordinary log line\n", 70000)
 			}
@@ -153,8 +153,16 @@ func TestUploadRoundTrip(t *testing.T) {
 			if err := manifest.Validate(); err != nil {
 				t.Fatal(err)
 			}
-			if len(manifest.Sources) != 1 || manifest.Collector != "aken test" || manifest.Redaction.LinesRedacted != 1 || (large && manifest.ChunkCount < 2) {
+			if len(manifest.Sources) != 1 || manifest.Collector != "aken test" || manifest.Redaction.LinesRedacted != 1 || manifest.Redaction.Flags != 1 || (large && manifest.ChunkCount < 2) {
 				t.Fatalf("manifest = %+v", manifest)
+			}
+			progress := "Creating the session on " + server.URL + "...\n"
+			for i := uint32(1); i <= manifest.ChunkCount; i++ {
+				progress += fmt.Sprintf("Uploading chunk %d of %d (%s of %s)...\n", i, manifest.ChunkCount, sizeText(min(int64(i)*protocol.ChunkSize, manifest.TotalBytes)), sizeText(manifest.TotalBytes))
+			}
+			progress += "Uploading the manifest...\nUploaded "
+			if !strings.Contains(out.String(), progress) || !strings.Contains(out.String(), "; 1 hex id or hashes not listed.") {
+				t.Fatalf("missing progress or distinct id count: %s", out.String())
 			}
 			var plaintext []byte
 			for i := uint32(0); i < info.ChunkCount; i++ {
@@ -173,7 +181,7 @@ func TestUploadRoundTrip(t *testing.T) {
 				plaintext = append(plaintext, opened...)
 			}
 			expected := strings.ReplaceAll(strings.ReplaceAll(body, "203.0.113.5", "<ip#1>"), "abcdefgh", "<secret#1>")
-			if !large && !strings.Contains(out.String(), "file:"+o.Files[0]+":1 | "+strings.TrimSuffix(expected, "\n")) {
+			if !large && !strings.Contains(out.String(), "file:"+o.Files[0]+":1 | from <ip#1> password=<secret#1>") {
 				t.Fatal("reviewed bytes differ from uploaded bytes")
 			}
 			if string(plaintext) != expected {
@@ -371,7 +379,7 @@ func TestCustomRulesAndDistinctFlags(t *testing.T) {
 	if code := Run(context.Background(), o, strings.NewReader("v\nq\n"), &out, &errs, true, 40); code != 0 {
 		t.Fatal(code, errs.String())
 	}
-	for _, want := range []string{"15 rules (14 default, 1 from " + o.RulesFile + ")", "<name#1> 203.0.113.5", "Flags   1 high-entropy strings", "lines 1, 2"} {
+	for _, want := range []string{"15 rules (14 default, 1 from " + o.RulesFile + ")", "<name#1> 203.0.113.5", "Flags   1 string to inspect", "lines 1, 2"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing %q in %s", want, out.String())
 		}

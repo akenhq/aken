@@ -30,6 +30,7 @@ type screenData struct {
 	rulesPath                string
 	categories               []string
 	linesCollapsed           int64
+	idFlags                  int64
 }
 
 func sizeText(n int64) string {
@@ -110,23 +111,42 @@ func renderScreen(w io.Writer, s screenData) {
 			_, _ = fmt.Fprintln(w)
 		}
 	}
-	_, _ = fmt.Fprintf(w, "  %d of %d lines changed\n\nFlags   %d high-entropy strings matched no rule", s.manifest.Redaction.LinesRedacted, total, s.manifest.Redaction.Flags)
-	var locations []string
-	for _, src := range s.sources {
-		var nums []string
-		seen := map[int]bool{}
-		for _, f := range src.flags {
-			if !seen[f.Line] {
-				nums = append(nums, strconv.Itoa(f.Line))
-				seen[f.Line] = true
+	_, _ = fmt.Fprintf(w, "  %d of %d lines changed\n\nFlags   ", s.manifest.Redaction.LinesRedacted, total)
+	n := s.manifest.Redaction.Flags
+	if n == 0 && s.idFlags == 0 {
+		_, _ = fmt.Fprint(w, "none")
+	} else {
+		_, _ = fmt.Fprintf(w, "%d %s to inspect", n, plural(n, "string", "strings"))
+		var locations []string
+		for _, src := range s.sources {
+			var nums []string
+			seen := map[int]bool{}
+			for _, f := range src.flags {
+				if !f.IDShaped && !seen[f.Line] {
+					if len(nums) < 20 {
+						nums = append(nums, strconv.Itoa(f.Line))
+					}
+					seen[f.Line] = true
+				}
+			}
+			if len(nums) > 0 {
+				location := src.manifest.Name + " lines " + strings.Join(nums, ", ")
+				if len(seen) > 20 {
+					location += fmt.Sprintf(" and %d more", len(seen)-20)
+				}
+				locations = append(locations, location)
 			}
 		}
-		if len(nums) > 0 {
-			locations = append(locations, src.manifest.Name+" lines "+strings.Join(nums, ", "))
+		if n > 0 {
+			_, _ = fmt.Fprintf(w, ": %s", strings.Join(locations, "; "))
 		}
-	}
-	if len(locations) > 0 {
-		_, _ = fmt.Fprintf(w, ": %s. View them before sending.", strings.Join(locations, "; "))
+		if s.idFlags > 0 {
+			_, _ = fmt.Fprintf(w, "; %d hex %s or hashes not listed", s.idFlags, plural(s.idFlags, "id", "ids"))
+		}
+		_, _ = fmt.Fprint(w, ".")
+		if n > 0 {
+			_, _ = fmt.Fprint(w, " Press f to view the lines to inspect.")
+		}
 	}
 	_, _ = fmt.Fprint(w, "\n\nUpload   ")
 	if s.options.DryRun {
@@ -170,7 +190,9 @@ func review(stdin *bufio.Reader, stdout io.Writer, s screenData, dryRun bool, pa
 			for _, src := range s.sources {
 				flagged := map[int]bool{}
 				for _, f := range src.flags {
-					flagged[f.Line] = true
+					if !f.IDShaped {
+						flagged[f.Line] = true
+					}
 				}
 				for i, line := range src.lines {
 					if flaggedOnly && !flagged[i+1] {

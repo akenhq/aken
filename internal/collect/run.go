@@ -100,21 +100,38 @@ func loadRules(o Options) (*redact.Engine, redact.File, string, int, int, error)
 	return engine, merged, path, defaults, extras, err
 }
 func readSources(ctx context.Context, o Options, stderr io.Writer) ([]*source.Source, error) {
-	var sources []*source.Source
-	for _, group := range []struct {
-		kind  source.Kind
-		names []string
-	}{{source.KindUnit, o.Units}, {source.KindContainer, o.Containers}} {
-		for _, name := range group.names {
-			s, err := source.ReadJournal(ctx, source.Spec{Kind: group.kind, Target: name}, o.Since, o.Until)
-			if err != nil {
-				return nil, err
-			}
-			if len(s.Lines) == 0 {
-				_, _ = fmt.Fprintf(stderr, "aken: no journal entries for %s in the window; check the name, the window, that the aken user is in the systemd-journal group and, for containers, that the logging driver is journald\n", name)
-			}
-			sources = append(sources, s)
+	var specs []source.Spec
+	for _, name := range o.Units {
+		specs = append(specs, source.Spec{Kind: source.KindUnit, Target: name})
+	}
+	for _, name := range o.Containers {
+		names, err := source.ResolveContainers(ctx, name)
+		if err != nil {
+			return nil, err
 		}
+		for _, target := range names {
+			match := "CONTAINER_NAME=" + target
+			if len(name) == 12 || len(name) == 64 {
+				if _, err := hex.DecodeString(name); err == nil {
+					match = "CONTAINER_ID=" + name
+					if len(name) == 64 {
+						match = "CONTAINER_ID_FULL=" + name
+					}
+				}
+			}
+			specs = append(specs, source.Spec{Kind: source.KindContainer, Target: target, Match: match})
+		}
+	}
+	var sources []*source.Source
+	for _, spec := range specs {
+		s, err := source.ReadJournal(ctx, spec, o.Since, o.Until)
+		if err != nil {
+			return nil, err
+		}
+		if len(s.Lines) == 0 {
+			_, _ = fmt.Fprintf(stderr, "aken: no journal entries for %s in the window; check the name, the window, that the aken user is in the systemd-journal group and, for containers, that the logging driver is journald\n", spec.Target)
+		}
+		sources = append(sources, s)
 	}
 	files := source.Files{Allowed: append([]string{"/var/log"}, o.Allow...), Tail: o.Tail, ModifiedAfter: o.Since}
 	fileSources, err := source.ReadFiles(files, o.Files, o.Globs)
@@ -160,6 +177,7 @@ func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writ
 	var plaintext bytes.Buffer
 	var totalLines int64
 	uniqueFlags := map[string]bool{}
+	idFlags := map[string]bool{}
 	for _, src := range sources {
 		result := engine.Redact(src.Lines)
 		screen.linesCollapsed += result.LinesCollapsed
@@ -184,11 +202,16 @@ func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writ
 			m.Redaction.ByCategory[c] = previous
 		}
 		for _, f := range result.Flags {
-			uniqueFlags[f.Value] = true
+			if f.IDShaped {
+				idFlags[f.Value] = true
+			} else {
+				uniqueFlags[f.Value] = true
+			}
 		}
 		screen.sources = append(screen.sources, screenSource{manifest: ms, lines: result.Lines, flags: result.Flags})
 	}
 	m.Redaction.Flags = int64(len(uniqueFlags))
+	screen.idFlags = int64(len(idFlags))
 	m.TotalBytes = int64(plaintext.Len())
 	if m.TotalBytes > protocol.MaxChunkCount*protocol.ChunkSize {
 		return fail(fmt.Errorf("%d exceeds the 128 MiB artifact cap; narrow --since or use --tail", m.TotalBytes))
@@ -241,6 +264,7 @@ func upload(ctx context.Context, o Options, plaintext []byte, m protocol.Manifes
 	if info.Caps.TTLMaxSeconds < int64(o.TTL/time.Second) {
 		return fail(errors.New("relay TTL cap is below the requested TTL"))
 	}
+	_, _ = fmt.Fprintf(stdout, "Creating the session on %s...\n", o.RelayURL)
 	session, err := client.CreateSession(ctx, id, o.TTL, m.ChunkCount)
 	if err != nil {
 		return fail(err)
@@ -265,7 +289,10 @@ func upload(ctx context.Context, o Options, plaintext []byte, m protocol.Manifes
 	if err := writeLocalCopy(dir, plaintext, m, mapping, run); err != nil {
 		return uploadFail(err)
 	}
+	var uploaded int64
 	for i, chunk := range sealed {
+		uploaded += int64(len(chunks[i]))
+		_, _ = fmt.Fprintf(stdout, "Uploading chunk %d of %d (%s of %s)...\n", i+1, m.ChunkCount, sizeText(uploaded), sizeText(m.TotalBytes))
 		if err := client.PutChunk(ctx, id, uint64(i), chunk); err != nil {
 			return uploadFail(err)
 		}
@@ -278,6 +305,7 @@ func upload(ctx context.Context, o Options, plaintext []byte, m protocol.Manifes
 	if err != nil {
 		return uploadFail(err)
 	}
+	_, _ = fmt.Fprintln(stdout, "Uploading the manifest...")
 	if err := client.PutManifest(ctx, id, encrypted); err != nil {
 		return uploadFail(err)
 	}

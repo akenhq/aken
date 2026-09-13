@@ -25,10 +25,6 @@ type Result struct {
 	Mapping        map[string]string
 	Rules          int
 }
-type Flag struct {
-	Line  int
-	Value string
-}
 
 var keyBegin = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`)
 var keyEnd = regexp.MustCompile(`-----END [A-Z ]*PRIVATE KEY-----`)
@@ -139,8 +135,9 @@ func (e *Engine) Redact(lines [][]byte) Result {
 			count.Lines++
 			result.ByCategory[c] = count
 		}
-		for _, value := range flags(line, e.keep) {
-			result.Flags = append(result.Flags, Flag{Line: len(result.Lines), Value: value})
+		for _, flag := range flags(line, e.keep) {
+			flag.Line = len(result.Lines)
+			result.Flags = append(result.Flags, flag)
 		}
 	}
 	for c, values := range e.values {
