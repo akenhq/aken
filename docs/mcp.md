@@ -111,6 +111,27 @@ Add this configuration to `.cursor/mcp.json` in your project or
 {"mcpServers": {"aken": {"command": "aken-mcp", "args": ["serve"]}}}
 ```
 
+## Prompts that work
+
+After joining a session and connecting the MCP, try one of these prompts:
+
+- `Check the aken MCP: summarise what the collected log covers and list the error lines.`
+- `In the aken artifact, find every 429 or rate limit line, group them by the proxy placeholder, and show the first occurrence with context.`
+- `Use the aken tools to reconstruct what happened to job <id> between 11:30 and 11:40; quote line numbers.`
+
+Replace `<id>` with the job ID you want to investigate. The agent sees redacted
+values as placeholders such as `<ip#3>` or `<secret#1>`. Within the artifact,
+the same placeholder refers to the same original value, so the agent can
+correlate occurrences without recovering the value. The `lines_redacted`
+metadata counts returned lines containing placeholders, not replaced values.
+
+At connection time, the server sends workflow guidance: start with `summary`,
+then `sources`; use RE2 `search` with before/after context, `context` around a
+line number, and `read` for exact ranges of at most 500 lines, continuing with
+`next_from`. The guidance also explains that tools are read-only, line numbers
+start at 1 per source, responses end with JSON metadata, and the human must
+collect again after the expiry reported by `summary`.
+
 ## Tools
 
 The tools read one artifact. Prefer `search` and `context` over reading whole

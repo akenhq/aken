@@ -13,7 +13,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const instructions = "Read-only tools over one log artifact that a human collected with aken collect, redacted on the server and uploaded encrypted. Values were replaced with placeholders such as <ip#3> or <secret#1>; within this artifact the same placeholder always stands for the same original value. Every response says how many returned lines contain placeholders. Prefer search and context over reading whole sources. Line numbers are 1-based per source."
+const instructions = "Read-only tools over one log artifact that a human collected with aken collect on a server, redacted there and uploaded encrypted; nothing you do here touches the server. Start with summary, then sources. Use search with a RE2 regex and before/after context instead of reading whole sources; use context around a line number and read for exact ranges (at most 500 lines per call, next_from continues). Line numbers are 1-based per source. Values were replaced with placeholders such as <ip#3> or <secret#1>; within this artifact the same placeholder always stands for the same original value, so you can correlate by placeholder but never recover the value. Every response ends with a JSON line: lines_redacted is how many returned lines contain placeholders. The artifact expires at the time summary reports; after that every tool returns an error and the human must collect again."
 
 type Server struct {
 	SessionPath   string

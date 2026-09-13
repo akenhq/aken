@@ -187,13 +187,13 @@ func TestFlags(t *testing.T) {
 	for _, tt := range []struct {
 		line string
 		keep map[string]bool
-		want []string
+		want []Flag
 	}{
-		{value, nil, []string{value}}, {value + " " + value, nil, []string{value}}, {value, map[string]bool{value: true}, nil},
+		{value, nil, []Flag{{Value: value}}}, {value + " " + value, nil, []Flag{{Value: value}}}, {value, map[string]bool{value: true}, nil},
 		{"aaaaaaaaaaaaaaaaaaaa1", nil, nil}, {"abcdefghijklmnopqrstuv", nil, nil}, {"12345678901234567890123", nil, nil}, {"aB3dE5gH7jK9", nil, nil}, {"<secret#12345678901234567890>", nil, nil},
 	} {
 		if got := flags([]byte(tt.line), tt.keep); !reflect.DeepEqual(got, tt.want) {
-			t.Errorf("flags(%q) = %q", tt.line, got)
+			t.Errorf("flags(%q) = %+v", tt.line, got)
 		}
 	}
 	if entropy([]byte("abcd")) != 2 || entropy(nil) != 0 {
@@ -262,5 +262,32 @@ func TestKeyBlockBound(t *testing.T) {
 		if got.LinesCollapsed != int64(collapsed) || len(got.Lines) != len(lines)-collapsed || string(got.Lines[0]) != "<key#1>" || !reflect.DeepEqual(got.Lines[1:], lines[collapsed+1:]) {
 			t.Fatalf("END offset %d: result = %+v", end, got)
 		}
+	}
+}
+
+func TestIDShapedFlags(t *testing.T) {
+	e, err := Compile(File{Version: 1}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		value string
+		id    bool
+	}{
+		{"507f1f77bcf86cd799439012", true},
+		{strings.Repeat("0123456789abcdef", 2), true},
+		{strings.Repeat("0123456789ABCDEF", 4), true},
+		{"01234567-89aB-cDeF-0123-456789abcdef", true},
+		{"aB3dE5gH7jK9mN1pQ2sT4+/=", false},
+		{"0123456789abcDEF0123456789", false},
+		{strings.Repeat("0123456789abcdef", 5), false},
+	} {
+		t.Run(tt.value, func(t *testing.T) {
+			got := e.Redact([][]byte{[]byte(tt.value)}).Flags
+			want := []Flag{{Line: 1, Value: tt.value, IDShaped: tt.id}}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("flags = %+v, want %+v", got, want)
+			}
+		})
 	}
 }

@@ -33,7 +33,7 @@ Select at least one source. Each source flag can repeat.
 | Flag | What it reads | How the window applies |
 |---|---|---|
 | `--unit NAME` | journald unit, for example nginx or nginx.service | `--since` to `--until` |
-| `--container NAME` | docker container that logs through the journald driver | `--since` to `--until` |
+| `--container NAME` | Docker containers using journald: an exact name, a short name matching names that start with `NAME` followed by `.`, `_`, or `-` (including Swarm task names), or a 12- or 64-character hex ID; several matching names become several sources | `--since` to `--until` |
 | `--file PATH` | plain text file; absolute path under /var/log or a --allow directory | No timestamp filtering within the file; `--tail` limits lines |
 | `--glob PATTERN` | files matching a glob; every match must be under an allowed directory | Skips files last modified before `--since`; `--tail` limits lines |
 
@@ -43,6 +43,17 @@ so the collector receives the pattern.
 
 Source names are `unit:<name>`, `container:<name>`, and `file:<absolute path>`.
 Files selected by `--glob` also use `file:` names.
+
+Container IDs of exactly 12 or 64 hex characters match `CONTAINER_ID` or
+`CONTAINER_ID_FULL`, respectively, and use the ID as the source target.
+Other names are resolved before reading, using the same journalctl binary with
+`--no-pager -q -F CONTAINER_NAME`. An exact name takes precedence over prefix
+matches. Swarm task names have the form `<stack>_<service>.<slot>.<task id>`.
+Each matched name is read with `CONTAINER_NAME=<full name>` and becomes a
+`container:<full name>` source, sorted by name. If no name matches, collection
+stops before reading and reports up to 20 sorted known names; if the journal
+has no container logs, the error points to the journald driver setup in
+[Docker logs](docker.md#check-it).
 
 | Selection flag | Meaning |
 |---|---|
@@ -91,7 +102,7 @@ Redaction   14 rules (12 default, 2 from /etc/aken/rules.json); kept: 10.0.0.5; 
   email        off
   1210 of 2814 lines changed
 
-Flags   3 high-entropy strings matched no rule: unit:nginx.service lines 88, 401, 1733. View them before sending.
+Flags   3 strings to inspect: unit:nginx.service lines 88, 401, 1733; 2 hex ids or hashes not listed. Press f to view the lines to inspect.
 
 Upload   2814 lines, 412.3 KiB, 1 chunk, TTL 4h, relay https://relay.aken.dev
 Local    /var/lib/aken/runs/ (kept 30 days; includes the placeholder mapping)
@@ -101,9 +112,19 @@ Local    /var/lib/aken/runs/ (kept 30 days; includes the placeholder mapping)
 ```
 
 Choose **view everything** to inspect the artifact and **view flagged lines**
-to inspect possible missed values. Choose **send** only when you are ready to
-share the reviewed content. Choose **abort** to stop without uploading.
+to inspect possible missed values other than hex IDs or UUIDs. Choose **send**
+only when you are ready to share the reviewed content. Choose **abort** to stop
+without uploading.
 
+On **send**, the collector prints progress to stdout before the final block:
+
+```text
+Creating the session on <relay>...
+Uploading chunk <i> of <n> (<size so far> of <total>)...
+Uploading the manifest...
+```
+
+There is one upload progress line per chunk; sizes use KiB or MiB.
 A successful run ends with this layout; the token below is a placeholder:
 
 ```text
@@ -125,12 +146,27 @@ On your machine, [join the session](mcp.md#join-a-session) at the terminal.
 |---|---|
 | **Sources** | Selected sources, line counts, journal windows, and file tail notes |
 | **Redaction** | Active rules, kept values, disabled categories, distinct replaced values, and changed lines |
-| **Flags** | High-entropy strings that matched no rule, with source and line numbers |
+| **Flags** | High-entropy strings to inspect, with source and line numbers; a separate count of hex IDs or hashes |
 | **Upload** | Lines, size, chunks, lifetime, and destination relay |
 | **Local** | Local copy directory and retention, including the placeholder mapping |
 
 A line can contain replacements from more than one category. Category line
 counts therefore need not add up to the total changed-line count.
+
+With no flags, the line is `Flags   none`. Otherwise, it starts with
+`Flags   <n> strings to inspect` (`string` for one). When there are strings to
+inspect, it adds `: <source> lines <line numbers>`, listing up to 20 line
+numbers per source and appending ` and <k> more` for additional lines.
+When there are hex IDs or hashes, it appends `; <m> hex ids or hashes not listed`
+(`id` for one). The line ends with `. Press f to view the lines to inspect.`
+when there are strings to inspect, or just `.` otherwise.
+
+Here, "hex ids or hashes" means flagged strings that are entirely hexadecimal
+digits of one case, 16 to 64 characters long, or UUIDs with `8-4-4-4-12`
+hexadecimal groups. They are counted separately because their shape resembles
+IDs or hashes; their lines are not listed for inspection. The manifest's
+`redaction.flags` counts only distinct strings to inspect. Press `f` to show
+only lines with strings to inspect, or `v` to view everything.
 
 The viewer prints one screen at a time (the terminal height, or 40 lines when
 it cannot be read) as `<source>:<line> | <text>`. Flagged

@@ -69,6 +69,10 @@ Register the MCP with Claude Code:
 claude mcp add aken -- aken-mcp serve
 ```
 
+Then ask Claude Code:
+
+> Check the aken MCP: summarise what the collected log covers and list the error lines.
+
 Check the session and its expiry:
 
 ```sh
