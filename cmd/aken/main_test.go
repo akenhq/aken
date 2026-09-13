@@ -65,3 +65,39 @@ func TestRun(t *testing.T) {
 		})
 	}
 }
+
+func TestServeFlags(t *testing.T) {
+	original := geteuid
+	t.Cleanup(func() { geteuid = original })
+	for _, tt := range []struct {
+		name      string
+		args      []string
+		uid, code int
+		want      string
+	}{
+		{"help", []string{"--help"}, 1000, 0, serveUsage},
+		{"root before flags", []string{"--bogus"}, 0, 1, "refusing to run as root"},
+		{"root help", []string{"--help"}, 0, 1, "refusing to run as root"},
+		{"unknown flag", []string{"--exec"}, 1000, 2, "flag provided but not defined"},
+		{"positional", []string{"extra"}, 1000, 2, "unexpected positional arguments"},
+		{"bad level", []string{"--level", "2"}, 1000, 2, "--level must be"},
+		{"negative level", []string{"--level", "-1"}, 1000, 2, "--level must be"},
+		{"long ttl", []string{"--ttl", "25h"}, 1000, 2, "--ttl must be"},
+		{"zero ttl", []string{"--ttl", "0"}, 1000, 2, "--ttl must be"},
+		{"bad ttl", []string{"--ttl", "x"}, 1000, 2, "invalid value"},
+		{"negative retention", []string{"--retention", "-1h"}, 1000, 2, "--retention must not"},
+		{"relative scope", []string{"--allow", "logs"}, 1000, 2, "--allow directory must be absolute"},
+		{"bad relay", []string{"--relay", "http://example.com"}, 1000, 2, "invalid relay URL"},
+		{"terminal", nil, 1000, 1, "aken: serve needs a terminal"},
+		{"all flags", []string{"--level", "0", "--ttl", "24h", "--relay", "https://relay.aken.dev", "--allow", "/tmp", "--allow", "/srv", "--keep", "value", "--keep-category", "email", "--rules", "/tmp/rules", "--state-dir", "/tmp/state", "--retention", "0"}, 1000, 1, "aken: serve needs a terminal"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			geteuid = func() int { return tt.uid }
+			var out, errs bytes.Buffer
+			code := run(append([]string{"serve"}, tt.args...), &out, &errs)
+			if code != tt.code || !strings.Contains(out.String()+errs.String(), tt.want) {
+				t.Fatalf("exit %d; stdout %q; stderr %q", code, out.String(), errs.String())
+			}
+		})
+	}
+}

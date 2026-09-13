@@ -3,6 +3,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -13,7 +14,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const instructions = "Read-only tools over one log artifact that a human collected with aken collect on a server, redacted there and uploaded encrypted; nothing you do here touches the server. Start with summary, then sources. Use search with a RE2 regex and before/after context instead of reading whole sources; use context around a line number and read for exact ranges (at most 500 lines per call, next_from continues). Line numbers are 1-based per source. Values were replaced with placeholders such as <ip#3> or <secret#1>; within this artifact the same placeholder always stands for the same original value, so you can correlate by placeholder but never recover the value. Every response ends with a JSON line: lines_redacted is how many returned lines contain placeholders. The artifact expires at the time summary reports; after that every tool returns an error and the human must collect again."
+const instructions = "Read-only tools over one log artifact that a human collected with aken collect on a server, redacted there and uploaded encrypted; nothing you do here touches the server. Start with summary, then sources. Use search with a RE2 regex and before/after context instead of reading whole sources; use context around a line number and read for exact ranges (at most 500 lines per call, next_from continues). Line numbers are 1-based per source. Values were replaced with placeholders such as <ip#3> or <secret#1>; within this artifact the same placeholder always stands for the same original value, so you can correlate by placeholder but never recover the value. Every response ends with a JSON line: lines_redacted is how many returned lines contain placeholders. The artifact expires at the time summary reports; after that every tool returns an error and the human must collect again.\n\nIn live sessions, the tools run on the server as typed jobs the human approves in a terminal. Page with from or cursor. Prefer search_files and journal with regex over reading whole files. Every result is redacted with the same placeholders across the session."
 
 type Server struct {
 	SessionPath   string
@@ -25,6 +26,8 @@ type Server struct {
 	mu            sync.Mutex
 	loaded        *artifact.Artifact
 	loadedFor     string
+	results       map[string]protocol.Result
+	resultsFor    string
 }
 
 func (s *Server) MCP() *mcp.Server {
@@ -38,6 +41,17 @@ func (s *Server) MCP() *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{Name: "tail", Description: "Return the last n lines of a source.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, s.tail)
 	mcp.AddTool(srv, &mcp.Tool{Name: "read", Description: "Return lines from..to of a source, at most 500 per call; use next_from to continue.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, s.read)
 	mcp.AddTool(srv, &mcp.Tool{Name: "context", Description: "Return the lines around one line number of a source.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, s.context)
+	mcp.AddTool(srv, &mcp.Tool{Name: "list_dir", Description: "List a directory on the server.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, s.listDir)
+	mcp.AddTool(srv, &mcp.Tool{Name: "read_file", Description: "Read a file on the server; page with from and to.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, s.readFile)
+	mcp.AddTool(srv, &mcp.Tool{Name: "search_files", Description: "Search server files with a RE2 regex; page with cursor.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, s.searchFiles)
+	mcp.AddTool(srv, &mcp.Tool{Name: "tail_file", Description: "Read the last n lines of a server file.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, s.tailFile)
+	mcp.AddTool(srv, &mcp.Tool{Name: "journal", Description: "Read a service journal; filter with regex and page with cursor.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, s.journal)
+	mcp.AddTool(srv, &mcp.Tool{Name: "docker_logs", Description: "Read container logs; filter with regex and page with cursor.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, s.dockerLogs)
+	mcp.AddTool(srv, &mcp.Tool{Name: "systemctl_status", Description: "Read a systemd service status.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, s.systemctlStatus)
+	mcp.AddTool(srv, &mcp.Tool{Name: "ps", Description: "List server processes.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, s.ps)
+	mcp.AddTool(srv, &mcp.Tool{Name: "df", Description: "Show server filesystem usage.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, s.df)
+	mcp.AddTool(srv, &mcp.Tool{Name: "plan", Description: "Submit 1 to 40 catalog jobs for approval together. Use catalog names search and tail in jobs.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, s.plan)
+	mcp.AddTool(srv, &mcp.Tool{Name: "result", Description: "Wait for a job whose earlier call timed out.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, s.jobResult)
 	if s.AllowChatJoin {
 		mcp.AddTool(srv, &mcp.Tool{Name: "join", Description: "Store a session token so the tools can read its artifact on the relay this server was started with. The token then sits in this transcript; prefer aken-mcp join in a terminal."}, s.join)
 	}
@@ -66,6 +80,9 @@ func (s *Server) artifact(ctx context.Context) (*artifact.Artifact, session.Sess
 	if stored.Expired(s.now()) {
 		return nil, stored, fmt.Errorf("the session expired at %s; run aken collect again and join the new token", stored.ExpiresAt.Format(time.RFC3339))
 	}
+	if stored.Live() {
+		return nil, stored, errors.New("this is a live session: use read_file, search_files, tail_file, journal, docker_logs, systemctl_status, ps, df or plan")
+	}
 	if s.loaded != nil && s.loadedFor == stored.SessionID {
 		return s.loaded, stored, nil
 	}
@@ -84,4 +101,39 @@ func (s *Server) artifact(ctx context.Context) (*artifact.Artifact, session.Sess
 	}
 	s.loaded, s.loadedFor = a, stored.SessionID
 	return a, stored, nil
+}
+
+// Callers hold mu through submission and polling because relay delivery is at most once.
+func (s *Server) live(ctx context.Context) (protocol.SessionKeys, *protocol.RelayClient, session.Session, error) {
+	var keys protocol.SessionKeys
+	stored, err := session.Load(s.SessionPath)
+	if err != nil {
+		return keys, nil, stored, err
+	}
+	if stored.Expired(s.now()) {
+		return keys, nil, stored, fmt.Errorf("the session expired at %s; run aken serve again and join the new token", stored.ExpiresAt.UTC().Format(time.RFC3339))
+	}
+	if !stored.Live() {
+		return keys, nil, stored, errors.New("this session is one-shot: use sources, summary, search, tail, read or context")
+	}
+	if err := ctx.Err(); err != nil {
+		return keys, nil, stored, err
+	}
+	root, err := stored.ParsedContentRoot()
+	if err != nil {
+		return keys, nil, stored, err
+	}
+	token, err := stored.ParsedToken()
+	if err != nil {
+		return keys, nil, stored, err
+	}
+	defer token.Zero()
+	client, err := s.client(stored.Relay, token.RelayCredential())
+	if err != nil {
+		return keys, nil, stored, err
+	}
+	if s.resultsFor != stored.SessionID {
+		s.results, s.resultsFor = make(map[string]protocol.Result), stored.SessionID
+	}
+	return protocol.DeriveSessionKeys(root), client, stored, nil
 }

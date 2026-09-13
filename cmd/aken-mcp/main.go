@@ -142,6 +142,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return failure(stderr, errors.New("invalid token"))
 		}
 		defer token.Zero()
+		if err := session.CheckJoin(path, token); err != nil {
+			return failure(stderr, err)
+		}
 		client, err := protocol.NewRelayClient(relay, token.RelayCredential())
 		if err != nil {
 			return failure(stderr, err)
@@ -153,9 +156,16 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if err != nil {
 			return failure(stderr, err)
 		}
-		stored := session.Session{Version: 1, Token: token.Encode(), Relay: client.BaseURL, SessionID: token.SessionID().String(), ExpiresAt: info.ExpiresAt, JoinedAt: time.Now(), JoinedVia: "cli"}
+		stored, err := session.Join(ctx, client, token, info, "cli", time.Now())
+		if err != nil {
+			return failure(stderr, err)
+		}
 		if err := session.Save(path, stored); err != nil {
 			return failure(stderr, err)
+		}
+		if stored.Live() {
+			_, _ = fmt.Fprintf(stdout, "Joined live session %s via cli. It expires at %s.\n", stored.SessionID, stored.ExpiresAt.UTC().Format(time.RFC3339))
+			return 0
 		}
 		_, _ = fmt.Fprintf(stdout, "Joined session %s. The artifact expires at %s.\n", stored.SessionID, stored.ExpiresAt.Format(time.RFC3339))
 	case "serve":
@@ -176,7 +186,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			if stored.Expired(time.Now()) {
 				expired = " (expired)"
 			}
-			_, _ = fmt.Fprintf(stdout, "Session %s on %s, joined %s via %s, expires %s%s\n", stored.SessionID, stored.Relay, stored.JoinedAt.Format(time.RFC3339), stored.JoinedVia, stored.ExpiresAt.Format(time.RFC3339), expired)
+			_, _ = fmt.Fprintf(stdout, "Session %s on %s, mode %s, joined %s via %s, expires %s%s\n", stored.SessionID, stored.Relay, stored.Mode, stored.JoinedAt.UTC().Format(time.RFC3339), stored.JoinedVia, stored.ExpiresAt.UTC().Format(time.RFC3339), expired)
 			return 0
 		}
 		token, err := stored.ParsedToken()
@@ -193,6 +203,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		if err := session.Remove(path); err != nil {
 			return failure(stderr, err)
+		}
+		if stored.Live() {
+			_, _ = fmt.Fprintf(stdout, "Ended live session %s; the collector's aken serve stops on its next poll.\n", stored.SessionID)
+			return 0
 		}
 		_, _ = fmt.Fprintf(stdout, "Ended session %s; the artifact is deleted from the relay.\n", stored.SessionID)
 	}

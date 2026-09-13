@@ -20,6 +20,7 @@ type tokenVectors struct {
 		SessionID          string `json:"session_id"`
 		RelayCredentialHex string `json:"relay_credential_hex"`
 		ContentRootHex     string `json:"content_root_hex"`
+		ExchangeKeyHex     string `json:"exchange_key_hex"`
 	} `json:"valid"`
 	Invalid []struct {
 		Name  string `json:"name"`
@@ -50,13 +51,14 @@ func TestVectorsValid(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			credential, root := token.RelayCredential(), token.ContentRoot()
+			credential, root, exchange := token.RelayCredential(), token.ContentRoot(), token.ExchangeKey()
 			for _, value := range []struct{ name, got, want string }{
 				{"token", token.Encode(), vector.Token},
 				{"secret", hex.EncodeToString(token.secret[:]), vector.SecretHex},
 				{"session id", token.SessionID().String(), vector.SessionID},
 				{"relay credential", hex.EncodeToString(credential[:]), vector.RelayCredentialHex},
 				{"content root", hex.EncodeToString(root[:]), vector.ContentRootHex},
+				{"exchange key", hex.EncodeToString(exchange[:]), vector.ExchangeKeyHex},
 			} {
 				if value.got != value.want {
 					t.Errorf("%s = %q, want %q", value.name, value.got, value.want)

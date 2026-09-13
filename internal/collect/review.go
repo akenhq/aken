@@ -9,11 +9,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/akenhq/aken/internal/redact"
+	"github.com/akenhq/aken/internal/screen"
 	"github.com/akenhq/aken/protocol"
 )
 
@@ -33,28 +31,6 @@ type screenData struct {
 	idFlags                  int64
 }
 
-func sizeText(n int64) string {
-	if n >= 1<<20 {
-		return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20))
-	}
-	return fmt.Sprintf("%.1f KiB", float64(n)/(1<<10))
-}
-func durationText(d time.Duration) string {
-	if d%time.Hour == 0 {
-		return fmt.Sprintf("%dh", d/time.Hour)
-	}
-	if d%time.Minute == 0 {
-		return fmt.Sprintf("%dm", d/time.Minute)
-	}
-	return d.String()
-}
-
-func plural(n int64, one, many string) string {
-	if n == 1 {
-		return one
-	}
-	return many
-}
 func renderScreen(w io.Writer, s screenData) {
 	first := "aken collect: review before anything leaves this machine"
 	if s.options.DryRun {
@@ -104,7 +80,7 @@ func renderScreen(w io.Writer, s screenData) {
 		} else if count.Values == 0 {
 			_, _ = fmt.Fprintf(w, "  %-12s 0\n", c)
 		} else {
-			_, _ = fmt.Fprintf(w, "  %-10s%4d %-6s in %4d %s", c, count.Values, plural(count.Values, "value", "values"), count.Lines, plural(count.Lines, "line", "lines"))
+			_, _ = fmt.Fprintf(w, "  %-10s%4d %-6s in %4d %s", c, count.Values, screen.Plural(count.Values, "value", "values"), count.Lines, screen.Plural(count.Lines, "line", "lines"))
 			if c == "key" && s.linesCollapsed > 0 {
 				_, _ = fmt.Fprintf(w, " (%d lines collapsed)", s.linesCollapsed)
 			}
@@ -116,7 +92,7 @@ func renderScreen(w io.Writer, s screenData) {
 	if n == 0 && s.idFlags == 0 {
 		_, _ = fmt.Fprint(w, "none")
 	} else {
-		_, _ = fmt.Fprintf(w, "%d %s to inspect", n, plural(n, "string", "strings"))
+		_, _ = fmt.Fprintf(w, "%d %s to inspect", n, screen.Plural(n, "string", "strings"))
 		var locations []string
 		for _, src := range s.sources {
 			var nums []string
@@ -141,7 +117,7 @@ func renderScreen(w io.Writer, s screenData) {
 			_, _ = fmt.Fprintf(w, ": %s", strings.Join(locations, "; "))
 		}
 		if s.idFlags > 0 {
-			_, _ = fmt.Fprintf(w, "; %d hex %s or hashes not listed", s.idFlags, plural(s.idFlags, "id", "ids"))
+			_, _ = fmt.Fprintf(w, "; %d hex %s or hashes not listed", s.idFlags, screen.Plural(s.idFlags, "id", "ids"))
 		}
 		_, _ = fmt.Fprint(w, ".")
 		if n > 0 {
@@ -152,7 +128,7 @@ func renderScreen(w io.Writer, s screenData) {
 	if s.options.DryRun {
 		_, _ = fmt.Fprint(w, "would upload ")
 	}
-	_, _ = fmt.Fprintf(w, "%d lines, %s, %d %s, TTL %s, relay %s\n", total, sizeText(s.manifest.TotalBytes), s.manifest.ChunkCount, plural(int64(s.manifest.ChunkCount), "chunk", "chunks"), durationText(s.options.TTL), s.options.RelayURL)
+	_, _ = fmt.Fprintf(w, "%d lines, %s, %d %s, TTL %s, relay %s\n", total, screen.SizeText(s.manifest.TotalBytes), s.manifest.ChunkCount, screen.Plural(int64(s.manifest.ChunkCount), "chunk", "chunks"), screen.DurationText(s.options.TTL), s.options.RelayURL)
 	retention := "kept forever"
 	if s.options.Retention > 0 {
 		retention = fmt.Sprintf("kept %g days", s.options.Retention.Hours()/24)
@@ -202,52 +178,15 @@ func review(stdin *bufio.Reader, stdout io.Writer, s screenData, dryRun bool, pa
 					if flagged[i+1] {
 						gutter = "!"
 					}
-					lines = append(lines, fmt.Sprintf("%s:%d %s %s", src.manifest.Name, i+1, gutter, visible(line)))
+					lines = append(lines, fmt.Sprintf("%s:%d %s %s", src.manifest.Name, i+1, gutter, screen.Visible(line)))
 				}
 			}
 			if flaggedOnly && len(lines) == 0 {
 				_, _ = fmt.Fprintln(stdout, "no flagged lines")
-			} else if err := page(stdin, stdout, lines, pageLines); err != nil {
+			} else if err := screen.Page(stdin, stdout, lines, pageLines); err != nil {
 				return 0, err
 			}
 		}
 		_, _ = fmt.Fprint(stdout, ">\n")
 	}
-}
-func visible(line []byte) string {
-	var out strings.Builder
-	for len(line) > 0 {
-		r, size := utf8.DecodeRune(line)
-		switch {
-		case r == '\t':
-			out.WriteRune(r)
-		case r < 0x20 || r == 0x7f || r == utf8.RuneError && size == 1:
-			fmt.Fprintf(&out, "\\x%02x", line[0])
-		case !unicode.IsGraphic(r):
-			out.WriteString("\\u{" + strconv.FormatInt(int64(r), 16) + "}")
-		default:
-			out.WriteRune(r)
-		}
-		line = line[size:]
-	}
-	return out.String()
-}
-func page(stdin *bufio.Reader, stdout io.Writer, lines []string, pageLines int) error {
-	if pageLines <= 0 {
-		pageLines = 40
-	}
-	for i, line := range lines {
-		_, _ = fmt.Fprintln(stdout, line)
-		if (i+1)%pageLines == 0 && i+1 < len(lines) {
-			_, _ = fmt.Fprintln(stdout, "-- more: Enter, q to stop --")
-			input, err := stdin.ReadString('\n')
-			if err != nil {
-				return err
-			}
-			if strings.TrimSpace(input) == "q" {
-				return nil
-			}
-		}
-	}
-	return nil
 }

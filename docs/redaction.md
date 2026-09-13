@@ -25,6 +25,11 @@ placeholder numbers to correlate separate runs.
 Rules apply per line in file order. A later rule cannot match a span already
 replaced. The placeholder mapping stays local on the server.
 
+In a [live session](serve.md), placeholders stay consistent across every
+result of that session. The mapping lives in the session's local copy under
+`<state-dir>/sessions/` and is updated after each result that adds values.
+It contains original sensitive values and stays on the server.
+
 ## Categories
 
 | Category | Default | Coverage |

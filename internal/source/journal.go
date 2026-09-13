@@ -25,7 +25,7 @@ func ResolveContainers(ctx context.Context, name string) ([]string, error) {
 			return []string{name}, nil
 		}
 	}
-	path, err := journalPath()
+	path, err := BinaryPath("journalctl")
 	if err != nil {
 		return nil, err
 	}
@@ -62,13 +62,16 @@ func ResolveContainers(ctx context.Context, name string) ([]string, error) {
 	return nil, fmt.Errorf("no container named %q in the journal; known names: %s", name, strings.Join(names[:min(20, len(names))], ", "))
 }
 
-func journalPath() (string, error) {
-	path := "/usr/bin/journalctl"
+func BinaryPath(name string) (string, error) {
+	if name == "" || strings.ContainsAny(name, "/\\") || name == "." || name == ".." {
+		return "", errors.New("invalid binary name")
+	}
+	path := "/usr/bin/" + name
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		path = "/bin/journalctl"
+		path = "/bin/" + name
 	}
 	if _, err := os.Stat(path); err != nil {
-		return "", errors.New("journalctl not found")
+		return "", errors.New(name + " not found")
 	}
 	return path, nil
 }
@@ -92,7 +95,7 @@ func ReadJournal(ctx context.Context, spec Spec, since, until time.Time) (*Sourc
 	if spec.Match != "" {
 		match = spec.Match
 	}
-	path, err := journalPath()
+	path, err := BinaryPath("journalctl")
 	if err != nil {
 		return nil, err
 	}

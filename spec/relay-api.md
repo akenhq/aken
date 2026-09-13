@@ -1,12 +1,13 @@
 # Relay API
 
-Normative, phase 1. HTTP API v0, protocol version 1.
+Normative, phase 2. HTTP API v0, protocol version 1.
 
 ## Principles
 
-The relay stores opaque artifact ciphertext and session metadata. It is
+The relay stores opaque artifact ciphertext and session metadata, and queues
+opaque job and result ciphertext. It is
 untrusted for content integrity: readers must authenticate artifacts as defined
-in [blob.md](blob.md). The relay must enforce the caps below. It must not provide
+in [blob.md](blob.md) and envelopes as defined in [envelope.md](envelope.md). The relay must enforce the caps below. It must not provide
 listing or enumeration endpoints.
 
 ## Version negotiation
@@ -54,6 +55,12 @@ The session base path is `/v0/sessions/{sid}`. A session ID must consist of exac
 | `GET .../blob/chunks/{index}` | None | 200 ciphertext | 404 `not_found` |
 | `PUT .../blob/manifest` | Ciphertext | 201, no body | 409 `chunks_missing`, 409 `already_exists`, 413 `too_large` |
 | `GET .../blob/manifest` | None | 200 ciphertext | 404 `not_found` |
+| `POST .../join` | `JoinRequest` JSON | 201 `JoinInfo` JSON | 400 `bad_request`, 409 `already_exists`, 409 `wrong_mode` |
+| `GET .../join?wait=N` | None | 200 `JoinInfo` JSON; 204, no body, on timeout | 400 `bad_request`, 409 `wrong_mode` |
+| `POST .../jobs` | `Envelope` JSON | 202, no body | 400 `bad_request`, 403 `class_not_allowed`, 409 `not_joined`, 409 `bad_sequence`, 409 `wrong_mode`, 413 `too_large`, 429 `queue_full` |
+| `GET .../jobs?wait=N` | None | 200 `Messages` JSON; 204, no body, on timeout | 400 `bad_request`, 409 `wrong_mode` |
+| `POST .../results` | `Envelope` JSON | 202, no body | Same as POST jobs, with the result cap |
+| `GET .../results?wait=N` | None | 200 `Messages` JSON; 204, no body, on timeout | Same as GET jobs |
 
 JSON requests and responses use `Content-Type: application/json`. Ciphertext
 requests and responses use `Content-Type: application/octet-stream`.
@@ -62,11 +69,14 @@ requests and responses use `Content-Type: application/octet-stream`.
 
 | Field | JSON type | Meaning |
 |---|---|---|
-| `ttl_seconds` | integer | Requested lifetime in seconds; zero or absent selects 14400 |
-| `chunk_count` | integer | Final chunk count, 1..128 |
+| `ttl_seconds` | integer | Requested lifetime in seconds; zero or absent selects 14400 for blob mode or 28800 for session mode |
+| `chunk_count` | integer | Blob mode: final chunk count, 1..128; session mode: must be absent or zero |
+| `mode` | string, optional | `blob` (default) or `session` |
+| `collector_key` | string | Required in session mode: collector X25519 public key, 32 bytes, unpadded base64url |
+| `collector_mac` | string | Required in session mode: collector MAC, same encoding and length |
 
 TTL above 86400 seconds must return 400 `ttl_too_long`. Negative TTL and invalid
-chunk counts must return 400 `bad_request`. The dev relay caps creation JSON at
+chunk counts, modes or session keys must return 400 `bad_request`. The dev relay caps creation JSON at
 2097152 bytes and returns 413 `too_large` above that size.
 
 `SessionInfo` has these fields:
@@ -78,6 +88,13 @@ chunk counts must return 400 `bad_request`. The dev relay caps creation JSON at
 | `chunk_count` | integer | Final chunk count set at creation |
 | `chunks_stored` | integer | Number of distinct chunks stored |
 | `manifest_stored` | boolean | Whether the upload is complete |
+| `mode` | string | `blob` or `session` |
+| `joined` | boolean | Whether a session-mode session has joined; false for blob mode |
+| `collector_key` | string, optional | Collector public key from creation, unpadded base64url; omitted or empty for blob mode |
+| `collector_mac` | string, optional | Collector MAC from creation, unpadded base64url; omitted or empty for blob mode |
+
+Blob counts and `manifest_stored` must be zero and false for session mode. Key
+and MAC encodings must be canonical unpadded base64url of exactly 32 bytes.
 
 ## Caps
 
@@ -90,6 +107,11 @@ The relay must enforce and advertise these values in `Info.caps`:
 | `chunk_count` | 128 | Chunks |
 | `ttl_default_seconds` | 14400 | Seconds (4 hours) |
 | `ttl_max_seconds` | 86400 | Seconds (24 hours) |
+| `job_bytes` | 65536 | Ciphertext bytes per job |
+| `result_bytes` | 1048576 | Ciphertext bytes per result |
+| `queue_length` | 64 | Pending messages per direction |
+| `session_ttl_default_seconds` | 28800 | Seconds (8 hours) |
+| `wait_max_seconds` | 30 | Seconds per long poll |
 
 After version and authentication checks, a chunk body above `chunk_bytes` must
 return 413 `too_large` before index, size, or duplicate checks. Every non-last
@@ -129,11 +151,16 @@ and error strings are fixed:
 |---|---|---|
 | 400 | `bad_request` | Invalid request, index, or chunk size |
 | 400 | `ttl_too_long` | Requested TTL exceeds the cap |
+| 403 | `class_not_allowed` | Envelope class is not 1 |
 | 404 | `not_found` | Missing object, invalid session ID, or credential failure |
 | 405 | `method_not_allowed` | Known path with an unsupported method |
 | 409 | `already_exists` | Session or object already stored |
 | 409 | `chunks_missing` | Manifest uploaded before all chunks |
-| 413 | `too_large` | Body exceeds its cap |
+| 409 | `not_joined` | Session has not joined |
+| 409 | `bad_sequence` | Sequence differs from the next expected value and is not an identical replay of the last accepted envelope |
+| 409 | `wrong_mode` | Endpoint does not apply to the session mode |
+| 413 | `too_large` | Body or ciphertext exceeds its cap |
+| 429 | `queue_full` | Direction already has 64 queued messages |
 | 426 | `unsupported_version` | Missing or unsupported protocol version |
 
 Unknown paths must return 404 `not_found`. Known paths accept only the methods
@@ -148,8 +175,10 @@ The client must make at most three attempts on transport errors or 5xx responses
 waiting 500 ms and then 2 s while respecting cancellation. It must not retry
 4xx responses. `PutChunk` maps 409 `already_exists` to success. Other non-2xx
 responses become `RelayError`; unparseable error bodies use `http_<status>` as
-the code. JSON responses are limited to 2097152 bytes; ciphertext responses are
-limited to 1048592 bytes.
+the code. Single-object JSON responses are limited to 2097152 bytes; blob ciphertext
+responses are limited to 1048592 bytes. Queue responses may contain 64 envelopes
+and must allow their base64 payloads plus JSON overhead. The Go client bounds
+each queue response at `64 * (4 * ceil(ciphertext_cap / 3) + 1024)` bytes.
 
 ## Hosted relays
 
@@ -157,17 +186,86 @@ Per-IP rate limits and abuse controls are hosted-relay policy outside this spec.
 Hosted relays return HTTP 429 when those controls reject a request. The dev relay
 has no accounts, rate limits, persistence, or TLS.
 
-## Phase 2
+## Join and queues
 
-These paths are reserved without definitions in v0:
+Blob endpoints on session-mode sessions must return 409 `wrong_mode`. Join,
+jobs and results endpoints on blob-mode sessions must return 409 `wrong_mode`.
+These checks follow version and credential checks.
 
-| Method and path |
-|---|
-| `POST .../jobs` |
-| `GET .../jobs` |
-| `POST .../results` |
-| `GET .../results` |
-| `POST .../join` |
+`JoinRequest` has these fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `mcp_key` | string | MCP X25519 public key, canonical unpadded base64url of 32 bytes |
+| `mcp_mac` | string | MCP MAC, same encoding and length |
+| `via` | string | Must be `cli` or `chat` |
+
+Invalid join JSON, keys, MACs or `via` must return 400 `bad_request`. The relay
+must retain the first join. A second POST must return 409 `already_exists`.
+The relay does not know the exchange key and must leave MAC verification to the
+endpoints. `JoinInfo` has these fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `collector_key` | string | Key provided at creation |
+| `collector_mac` | string | MAC provided at creation |
+| `mcp_key` | string | Key provided at join |
+| `mcp_mac` | string | MAC provided at join |
+| `via` | string | `cli` or `chat` from the join |
+| `joined_at` | string | Join time in UTC RFC 3339 |
+
+POST jobs and results must check in this order:
+
+1. Session mode; otherwise 409 `wrong_mode`.
+2. Joined state; otherwise 409 `not_joined`.
+3. JSON and envelope fields: version 1, matching session ID, class 1..3,
+   sequence 1..4294967295, and payload longer than 16 bytes; otherwise
+   400 `bad_request`.
+4. Class equal to 1; otherwise 403 `class_not_allowed`.
+5. Decoded ciphertext at or below the direction's cap; otherwise 413 `too_large`.
+6. Sequence equal to the next expected value; otherwise 409 `bad_sequence`.
+7. Queue length below 64; otherwise 429 `queue_full`.
+
+The relay may bound the enclosing JSON request body at 2097152 bytes and return
+413 `too_large` above that size. Ciphertext caps apply to decoded payload bytes,
+not their base64 text. The two directions have separate counters starting at 1.
+A POST repeating the last accepted sequence with an identical envelope and
+byte-identical ciphertext must return 202 again without enqueueing it. This
+exception precedes queue-length checks and applies even after delivery. A
+changed payload at that sequence, or any older sequence, must be rejected.
+
+GET join, jobs and results accepts an optional integer `wait` query parameter.
+Absent or zero means no wait. Values outside 0..30 or invalid integers must
+return 400 `bad_request`. A GET must wait at most that many seconds for a join
+or at least one queued message. A join remains readable after GET. A queue GET
+must return all pending messages in sequence order and remove them atomically.
+Delivery is at most once. Concurrent polls must not receive the same message.
+`Messages` has one field, `messages`, an array of envelopes defined in
+[envelope.md](envelope.md). An empty poll must return 204 with no body.
+
+Every mutation must wake waiting requests to check the state again. DELETE and
+expiry must remove live state and wake waiters, which must receive 404
+`not_found`. A poll must honor request cancellation. Expiry must not be extended
+by a join, POST, or poll.
+
+The relay must keep the join, queues, counters and last accepted envelopes in
+memory. The Store keeps only the credential hash, expiry, mode, collector key
+and collector MAC for session-mode sessions. Queues must not touch the Store.
+A restart loses live sessions; later requests must return 404 `not_found` even
+if the session metadata remains in the Store. Clients must end that session.
+
+The Go client rounds wait durations down to whole seconds and clamps them to
+0..30. Its default HTTP timeout remains 60 seconds. A 204 maps to no join or no
+messages without an error. Existing transport and 5xx retries also apply to
+these methods; a job or result POST retry must resend the same envelope.
+A 404 from an older relay's join endpoint must remain a `RelayError` 404 so
+callers can report that the relay does not support persistent sessions.
+
+## Compatibility
+
+v0.1 clients send no `mode` and keep working. Omitted mode means `blob`, with
+the existing blob caps, four-hour default TTL, endpoints and upload behavior.
+Both modes retain the 24-hour TTL cap, protocol header and bearer credential.
 
 ## Conformance
 

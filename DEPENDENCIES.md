@@ -58,12 +58,16 @@ The server binary consists of these files today:
 - `cmd/aken/main.go`
 - `internal/buildinfo/buildinfo.go`
 - `internal/collect/*.go`
+- `internal/serve/*.go`
+- `internal/screen/*.go`
 - `internal/source/*.go`
 - `internal/redact/*.go`
 - `rules/rules.go`
 - `rules/default.json`
 - `protocol/token.go`
 - `protocol/blob.go`
+- `protocol/session.go`
+- `protocol/jobs.go`
 - `protocol/relayapi.go`
 - `protocol/relayclient.go`
 

@@ -23,8 +23,47 @@ jobs:
         with:
           version: v2.13.2
       - run: make vet test depcheck repro
+      - run: shellcheck -S style packaging/*.sh
+      - run: make test-install
       - name: Vulnerability scan
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+
+  install-container:
+    name: Install and run once in Debian
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run once, check filesystem changes, then install
+        shell: bash
+        run: |
+          set -euo pipefail
+          prepare='apt-get update && apt-get install -y --no-install-recommends ca-certificates curl util-linux'
+          once='curl -fsSL https://github.com/akenhq/aken/releases/latest/download/run.sh | bash -s -- collect --dry-run --file /var/log/dpkg.log'
+          docker run --rm --name aken-once debian:bookworm-slim bash -euo pipefail -c "$prepare; $once"
+
+          trap 'docker rm -f aken-once-diff >/dev/null 2>&1 || true' EXIT
+          docker run -d --name aken-once-diff debian:bookworm-slim sleep infinity
+          docker exec aken-once-diff bash -euo pipefail -c "$prepare; mkdir -p /root/.local/state"
+          # Exclude dependency setup and parent directory entries from the collector's changes.
+          docker diff aken-once-diff | LC_ALL=C sort > "$RUNNER_TEMP/aken-before"
+          docker exec aken-once-diff bash -euo pipefail -c "$once"
+          docker diff aken-once-diff | LC_ALL=C sort > "$RUNNER_TEMP/aken-after"
+          LC_ALL=C comm -13 "$RUNNER_TEMP/aken-before" "$RUNNER_TEMP/aken-after" > "$RUNNER_TEMP/aken-changes"
+          while IFS= read -r change; do
+            case "${change:2}" in
+              /root/.local/state/aken|/root/.local/state/aken/*|/tmp|/tmp/*) ;;
+              *) printf 'Unexpected container change: %s\n' "$change" >&2; exit 1 ;;
+            esac
+          done < "$RUNNER_TEMP/aken-changes"
+          docker exec aken-once-diff bash -euo pipefail -c '
+            test "$(stat -c "%u:%g:%a" /root/.local/state/aken)" = 0:0:700
+            test "$(stat -c "%a" /root)" = 700
+            test ! -e /usr/local/bin/aken
+            ! getent passwd aken
+            test -z "$(find /tmp -maxdepth 1 -name "aken-once.*" -print -quit)"
+          '
+          docker run --rm --name aken-install debian:bookworm-slim bash -euo pipefail -c \
+            "$prepare; curl -fsSL https://github.com/akenhq/aken/releases/latest/download/install.sh | bash; aken version"
 
   secrets:
     name: Secret scan

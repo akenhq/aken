@@ -87,6 +87,8 @@ func (t Token) ContentRoot() [32]byte {
 	return [32]byte(t.derive("content-root", 32))
 }
 
+func (t Token) ExchangeKey() [32]byte { return [32]byte(t.derive("exchange-key", 32)) }
+
 func (t Token) derive(info string, n int) []byte {
 	key, err := hkdf.Key(sha256.New, t.secret[:], []byte(tokenSalt), info, n)
 	if err != nil {

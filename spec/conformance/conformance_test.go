@@ -200,3 +200,182 @@ func TestUpload(t *testing.T) {
 		t.Fatal("upload incomplete", session, err)
 	}
 }
+
+func createPersistent(t *testing.T, client *protocol.RelayClient, token protocol.Token) protocol.SessionInfo {
+	t.Helper()
+	info, err := client.CreatePersistentSession(t.Context(), token.SessionID(), 0, [32]byte{1}, [32]byte{2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info
+}
+
+func joinPersistent(t *testing.T, client *protocol.RelayClient, token protocol.Token) protocol.JoinInfo {
+	t.Helper()
+	info, err := client.Join(t.Context(), token.SessionID(), [32]byte{3}, [32]byte{4}, "cli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info
+}
+
+func TestPersistentSessionAndJoin(t *testing.T) {
+	client, token := newClient(t)
+	id := token.SessionID()
+	created := createPersistent(t, client, token)
+	if created.Mode != "session" || created.Joined || created.ChunkCount != 0 || created.ChunksStored != 0 || created.ManifestStored || created.CollectorKey != protocol.EncodeKey([32]byte{1}) || created.CollectorMAC != protocol.EncodeKey([32]byte{2}) || time.Until(created.ExpiresAt) > protocol.DefaultSessionTTL || time.Until(created.ExpiresAt) < protocol.DefaultSessionTTL-time.Minute {
+		t.Fatal("session creation", created)
+	}
+	got, err := client.Session(t.Context(), id)
+	if err != nil || got != created {
+		t.Fatal("session read", got, err)
+	}
+	for _, suffix := range []string{"/blob/chunks/0", "/blob/manifest"} {
+		for _, method := range []string{"GET", "PUT"} {
+			raw(t, client, token, method, suffix, nil, "1", 409, "wrong_mode")
+		}
+	}
+	if info, ok, err := client.WaitJoin(t.Context(), id, time.Second); err != nil || ok || info != (protocol.JoinInfo{}) {
+		t.Fatal("unjoined wait", info, ok, err)
+	}
+	if body := raw(t, client, token, "GET", "/join?wait=0", nil, "1", 204, ""); len(body) != 0 {
+		t.Fatal("204 body")
+	}
+	joined := joinPersistent(t, client, token)
+	if joined.CollectorKey != created.CollectorKey || joined.CollectorMAC != created.CollectorMAC || joined.MCPKey != protocol.EncodeKey([32]byte{3}) || joined.MCPMAC != protocol.EncodeKey([32]byte{4}) || joined.Via != "cli" || joined.JoinedAt.IsZero() {
+		t.Fatal("join response", joined)
+	}
+	_, err = client.Join(t.Context(), id, [32]byte{5}, [32]byte{6}, "chat")
+	relayError(t, err, 409, "already_exists")
+	info, ok, err := client.WaitJoin(t.Context(), id, 0)
+	if err != nil || !ok || info != joined {
+		t.Fatal("first join changed", info, ok, err)
+	}
+	got, err = client.Session(t.Context(), id)
+	if err != nil || !got.Joined || !got.ExpiresAt.Equal(created.ExpiresAt) {
+		t.Fatal("joined session", got, err)
+	}
+	for _, suffix := range []string{"/join", "/jobs", "/results"} {
+		raw(t, client, token, "GET", suffix+"?wait=31", nil, "1", 400, "bad_request")
+	}
+}
+
+func TestPersistentMessages(t *testing.T) {
+	for _, kind := range []string{"jobs", "results"} {
+		t.Run(kind, func(t *testing.T) {
+			client, token := newClient(t)
+			id := token.SessionID()
+			createPersistent(t, client, token)
+			post, poll, capBytes := client.PostJob, client.PollJobs, protocol.MaxJobBytes
+			if kind == "results" {
+				post, poll, capBytes = client.PostResult, client.PollResults, protocol.MaxResultBytes
+			}
+			e := protocol.Envelope{Version: 1, SessionID: id.String(), Seq: 1, Class: 1, Payload: bytes.Repeat([]byte{1}, 17)}
+			relayError(t, post(t.Context(), id, e), 409, "not_joined")
+			joinPersistent(t, client, token)
+			body, err := json.Marshal(e)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if data := raw(t, client, token, "POST", "/"+kind, body, "1", 202, ""); len(data) != 0 {
+				t.Fatal("202 body")
+			}
+			if err := post(t.Context(), id, e); err != nil {
+				t.Fatal("idempotent replay", err)
+			}
+			bad := e
+			bad.Payload = bytes.Repeat([]byte{2}, 17)
+			relayError(t, post(t.Context(), id, bad), 409, "bad_sequence")
+			bad = e
+			bad.Seq = 3
+			relayError(t, post(t.Context(), id, bad), 409, "bad_sequence")
+			bad = e
+			bad.Seq = 2
+			bad.Class = 2
+			relayError(t, post(t.Context(), id, bad), 403, "class_not_allowed")
+			bad = e
+			bad.Seq = 2
+			bad.Payload = make([]byte, capBytes+1)
+			relayError(t, post(t.Context(), id, bad), 413, "too_large")
+			bad = e
+			bad.Version = 2
+			relayError(t, post(t.Context(), id, bad), 400, "bad_request")
+			messages, err := poll(t.Context(), id, 0)
+			if err != nil || len(messages) != 1 || messages[0].Seq != 1 || !bytes.Equal(messages[0].Payload, e.Payload) {
+				t.Fatal("messages", messages, err)
+			}
+			if err := post(t.Context(), id, e); err != nil {
+				t.Fatal("replay after delivery", err)
+			}
+			if messages, err := poll(t.Context(), id, time.Second); err != nil || messages != nil {
+				t.Fatal("duplicate delivery", messages, err)
+			}
+			for seq := uint64(2); seq <= 65; seq++ {
+				e.Seq = seq
+				if err := post(t.Context(), id, e); err != nil {
+					t.Fatal("queue fill", err)
+				}
+			}
+			if err := post(t.Context(), id, e); err != nil {
+				t.Fatal("full queue replay", err)
+			}
+			e.Seq = 66
+			relayError(t, post(t.Context(), id, e), 429, "queue_full")
+			messages, err = poll(t.Context(), id, 0)
+			if err != nil || len(messages) != 64 {
+				t.Fatal("full queue drain", len(messages), err)
+			}
+			for i, e := range messages {
+				if e.Seq != uint64(i+2) {
+					t.Fatal("queue order")
+				}
+			}
+			if err := post(t.Context(), id, e); err != nil {
+				t.Fatal("queue after drain", err)
+			}
+		})
+	}
+}
+
+func TestPersistentDeleteWakesPoll(t *testing.T) {
+	client, token := newClient(t)
+	createPersistent(t, client, token)
+	joinPersistent(t, client, token)
+	done := make(chan error, 1)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	go func() { _, err := client.PollJobs(ctx, token.SessionID(), 30*time.Second); done <- err }()
+	select {
+	case err := <-done:
+		t.Fatal("empty poll returned early", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := client.DeleteSession(t.Context(), token.SessionID()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		relayError(t, err, 404, "not_found")
+	case <-ctx.Done():
+		t.Fatal("delete did not wake poll")
+	}
+}
+
+func TestPersistentCompatibility(t *testing.T) {
+	client, token := newClient(t)
+	created, err := client.CreateSession(t.Context(), token.SessionID(), 0, 1)
+	if err != nil || created.Mode != "blob" || created.Joined || created.CollectorKey != "" || created.CollectorMAC != "" {
+		t.Fatal("blob compatibility", created, err)
+	}
+	for _, suffix := range []string{"/join", "/jobs", "/results"} {
+		for _, method := range []string{"GET", "POST"} {
+			raw(t, client, token, method, suffix, nil, "1", 409, "wrong_mode")
+		}
+	}
+	if err := client.PutChunk(t.Context(), token.SessionID(), 0, make([]byte, 17)); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.PutManifest(t.Context(), token.SessionID(), []byte("manifest")); err != nil {
+		t.Fatal(err)
+	}
+}

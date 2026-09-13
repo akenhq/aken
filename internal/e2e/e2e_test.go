@@ -211,8 +211,13 @@ func TestOneShot(t *testing.T) {
 		names = append(names, tool.Name)
 	}
 	slices.Sort(names)
-	if !slices.Equal(names, []string{"context", "read", "search", "sources", "summary", "tail"}) {
-		t.Fatalf("tools = %v, want six read-only tools and no join", names)
+	for _, name := range []string{"context", "read", "search", "sources", "summary", "tail"} {
+		if !slices.Contains(names, name) {
+			t.Fatalf("tools = %v, want the six artifact tools", names)
+		}
+	}
+	if slices.Contains(names, "join") {
+		t.Fatalf("tools = %v, want no join without --allow-chat-join", names)
 	}
 	source := "file:" + path
 	for _, tt := range []struct {

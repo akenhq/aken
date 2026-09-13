@@ -15,6 +15,9 @@ var (
 )
 
 type SessionMeta struct {
+	Mode           string
+	CollectorKey   [32]byte
+	CollectorMAC   [32]byte
 	CredentialHash [32]byte
 	ExpiresAt      time.Time
 	ChunkCount     uint32

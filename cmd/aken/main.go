@@ -7,10 +7,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/akenhq/aken/internal/buildinfo"
 	"github.com/akenhq/aken/internal/collect"
+	"github.com/akenhq/aken/internal/serve"
 	"github.com/akenhq/aken/internal/source"
 	"github.com/akenhq/aken/protocol"
 	"golang.org/x/term"
@@ -24,6 +28,7 @@ Usage:
 
 Commands:
   collect   Collect logs, redact them here, review, and upload one encrypted artifact
+  serve     Open a live session and run approved catalog jobs
   version   Print the version
   help      Print this help
 
@@ -78,6 +83,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "version":
 		_, _ = fmt.Fprintln(stdout, buildinfo.String("aken"))
 		return 0
+	case "serve":
+		return runServe(args, stdout, stderr)
 	case "collect":
 		return runCollect(args, stdout, stderr)
 	default:
@@ -171,4 +178,85 @@ func runCollect(args []string, stdout, stderr io.Writer) int {
 		pageLines = height - 2
 	}
 	return collect.Run(context.Background(), o, os.Stdin, stdout, stderr, interactive, pageLines)
+}
+
+const serveUsage = `Usage: aken serve [flags]
+
+Session:
+  --level N           0 runs every catalog job without asking; 1 asks for approval per job or plan (default 1)
+  --ttl D             session lifetime on the relay (default 8h, maximum 24h)
+  --relay URL         relay base URL (default https://relay.aken.dev)
+  --allow DIR         extra directory that file jobs may read from (repeatable; /var/log is always allowed)
+
+Redaction:
+  --keep VALUE        never replace this exact value (repeatable; shown when the session opens)
+  --keep-category C   switch a category off for this session (repeatable): secret token jwt key ip email phone name address
+  --rules FILE        extra rules file (default /etc/aken/rules.json when it exists)
+
+Local copy:
+  --state-dir DIR     where local copies go (default /var/lib/aken when writable, else $XDG_STATE_HOME/aken or ~/.local/state/aken)
+  --retention D       delete local copies older than this before the session (default 720h; 0 keeps everything)
+`
+
+func runServe(args []string, stdout, stderr io.Writer) int {
+	if geteuid() == 0 {
+		_, _ = fmt.Fprintln(stderr, "aken: refusing to run as root. Run it as the dedicated unprivileged user, for example: sudo -u aken aken serve")
+		return 1
+	}
+	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.Usage = func() { _, _ = fmt.Fprint(stdout, serveUsage) }
+	var o serve.Options
+	flags.IntVar(&o.Level, "level", 1, "")
+	flags.DurationVar(&o.TTL, "ttl", protocol.DefaultSessionTTL, "")
+	flags.StringVar(&o.RelayURL, "relay", protocol.DefaultRelayURL, "")
+	for _, f := range []struct {
+		name  string
+		value *[]string
+	}{{"allow", &o.Allow}, {"keep", &o.Keep}, {"keep-category", &o.KeepCategories}} {
+		flags.Var((*stringList)(f.value), f.name, "")
+	}
+	flags.StringVar(&o.RulesFile, "rules", "", "")
+	flags.StringVar(&o.StateDir, "state-dir", "", "")
+	flags.DurationVar(&o.Retention, "retention", 720*time.Hour, "")
+	if err := flags.Parse(args[1:]); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	usageError := func(message string) int { _, _ = fmt.Fprintf(stderr, "aken: %s\n", message); return 2 }
+	if flags.NArg() != 0 {
+		return usageError("unexpected positional arguments")
+	}
+	if o.Level != 0 && o.Level != 1 {
+		return usageError("--level must be 0 or 1")
+	}
+	if o.TTL <= 0 || o.TTL > protocol.MaxTTL {
+		return usageError("--ttl must be greater than 0 and at most 24h")
+	}
+	if o.Retention < 0 {
+		return usageError("--retention must not be negative")
+	}
+	for _, dir := range o.Allow {
+		if !filepath.IsAbs(dir) {
+			return usageError("--allow directory must be absolute")
+		}
+	}
+	if _, err := protocol.NewRelayClient(o.RelayURL, [32]byte{}); err != nil {
+		return usageError(err.Error())
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		_, _ = fmt.Fprintln(stderr, "aken: serve needs a terminal")
+		return 1
+	}
+	o.Argv = args
+	o.Collector = buildinfo.String("aken")
+	pageLines := 40
+	if _, height, err := term.GetSize(int(os.Stdout.Fd())); err == nil && height > 2 {
+		pageLines = height - 2
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	return serve.Run(ctx, o, os.Stdin, stdout, stderr, pageLines)
 }

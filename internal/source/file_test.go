@@ -145,3 +145,72 @@ func TestSpecialFileAndDeduplication(t *testing.T) {
 		t.Fatal("duplicate canonical path included")
 	}
 }
+
+func TestListAndReadLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "b.log")
+	if err := os.WriteFile(path, []byte("a\nb\xff\nc"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "a"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	files := Files{Allowed: []string{dir}}
+	entries, err := files.List(dir)
+	if err != nil || len(entries) != 2 || entries[0].Name != "a/" || entries[1].Name != "b.log" || entries[1].Size != 6 {
+		t.Fatalf("list: %+v, %v", entries, err)
+	}
+	for _, tt := range []struct {
+		from, to, total int
+		want            string
+		bad             bool
+	}{
+		{1, 1, 3, "a", false}, {2, 2, 3, "b\xff", false}, {2, 99, 3, "b\xff\nc", false}, {5, 9, 3, "", false}, {0, 1, 0, "", true}, {3, 2, 0, "", true},
+	} {
+		lines, total, err := files.ReadLines(path, tt.from, tt.to)
+		if (err != nil) != tt.bad || total != tt.total || string(bytes.Join(lines, []byte{'\n'})) != tt.want {
+			t.Fatalf("ReadLines(%d,%d)=%q,%d,%v", tt.from, tt.to, lines, total, err)
+		}
+	}
+	if _, err := files.List(t.TempDir()); err == nil {
+		t.Fatal("listed outside scope")
+	}
+	if _, _, err := files.ReadLines(dir, 1, 2); err == nil {
+		t.Fatal("read directory")
+	}
+}
+
+func TestSearchPages(t *testing.T) {
+	dir := t.TempDir()
+	a, b := filepath.Join(dir, "a"), filepath.Join(dir, "b")
+	for _, path := range []string{a, b} {
+		if err := os.WriteFile(path, []byte("before\nhit\nafter\nhit\nend\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := Files{Allowed: []string{dir}}
+	q := SearchQuery{Paths: []string{a, b}, Before: 1, After: 1, Max: 1}
+	for _, tt := range []struct{ cursor, next, prefix string }{
+		{"", "0:4", a + ":1- before"}, {"0:4", "1:2", a + ":3- after"}, {"1:2", "1:4", b + ":1- before"}, {"1:4", "", b + ":3- after"},
+	} {
+		q.Cursor = tt.cursor
+		r, err := files.Search("hit", q)
+		if err != nil || r.Next != tt.next || len(r.Lines) != 3 || r.Lines[0] != tt.prefix {
+			t.Fatalf("page %q: %+v, %v", tt.cursor, r, err)
+		}
+	}
+	for _, cursor := range []string{"bad", "-1:1", "0:0", "2:1", "0:99999999999999999999999"} {
+		q.Cursor = cursor
+		if _, err := files.Search("hit", q); err == nil {
+			t.Fatalf("accepted cursor %q", cursor)
+		}
+	}
+	q.Cursor = ""
+	if _, err := files.Search("[", q); err == nil {
+		t.Fatal("accepted regex")
+	}
+	q.Paths = []string{filepath.Join(t.TempDir(), "outside")}
+	if _, err := files.Search("hit", q); err == nil {
+		t.Fatal("searched outside scope")
+	}
+}

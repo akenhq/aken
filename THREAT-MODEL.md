@@ -1,9 +1,9 @@
 # Threat model
 
-Status: phase 1 implements one-shot mode. Jobs, approvals, and persistent
-sessions do not exist yet. The one-shot section describes current behavior;
-the remaining design includes controls for later phases, including background
-mode. See [README.md](README.md) for what works today.
+Status: phase 2 implements live sessions with catalog read jobs and terminal
+approvals, alongside one-shot mode. The mode sections describe current
+behavior. The remaining design includes controls for later phases, including
+exec and background mode. See [README.md](README.md) for what works today.
 
 ## What Aken is
 
@@ -66,6 +66,74 @@ The review screen shows exactly the plaintext bytes to be encrypted and sent.
 Its line-number gutter is display only. Review can catch values the rules
 missed; redaction remains defence in depth. Everything the agent reads goes
 to the LLM provider.
+
+## Live sessions (phase 2)
+
+The collector opens a session and handles typed catalog v1 jobs. The relay
+sees envelope versions, session IDs, sequence numbers, classes, ciphertext
+sizes, and timing. It also sees the join: public keys, authentication MACs,
+`via` (`cli` or `chat`), and the join time. Job names, parameters, and result
+contents are encrypted. The relay does not receive the token or content keys.
+
+The token derives an exchange key that authenticates fresh X25519 public
+keys with HMAC-SHA256. Each endpoint verifies its peer's MAC. The X25519
+shared secret and exchange transcript derive a content root and separate
+job and result keys for AES-256-GCM. The content root is not derived from the
+token alone. Someone who obtains only the token after the exchange cannot
+use it to decrypt recorded session traffic without the private key material
+or content root. Protect the token before joining: it authenticates the peer.
+See [the envelope specification](spec/envelope.md).
+
+Both endpoints check envelope authentication and the next expected sequence
+number. The collector also checks the job's catalog class against the
+class in the envelope before approval. Invalid envelopes are dropped without
+running a job. Catalog v1 contains only read jobs; commands use fixed argv
+arrays, no shell, and `/usr/bin` or `/bin` paths without a PATH lookup.
+
+| Level | Preapproval and review |
+|---|---|
+| `1` (default) | No job is preapproved. The human approves a job or plan in the server terminal. That approval permits automatic sending after redaction, except that strings to inspect pause the result for send or drop. |
+| `0` | Starting the session preapproves every catalog v1 job inside the path scope. Redacted results auto-send, including flagged results. The terminal shows a rolling summary and flag count. |
+
+Chat join requires the MCP's explicit `--allow-chat-join` opt-in. It puts the
+token in the chat transcript and forces the collector to level 1 even when
+started at level 0. Both levels require a terminal. Redaction and flags are
+defence in depth and can miss sensitive data; level 1 job approval does not
+mean the human inspected every output byte.
+
+`via` is reported by the joiner and not authenticated, so the level-1 promotion covers the honest chat join, not a token holder with a modified client.
+
+The collector refuses root and uses the same user and log groups as collect.
+File jobs stay under `/var/log` and repeatable `--allow` roots. Canonical path
+resolution through `os.Root` refuses escapes, including symlinks that leave
+an allowed root. Search expands at most 200 files within scope.
+
+The approval screen marks sensitive paths with `!`: `.env` and `.env.*`,
+`shadow`, `gshadow`; suffixes `.pem`, `.key`, `.p12`, `.pfx`, `.kdbx`,
+`.keystore`; names starting with `id_` or ending with `_rsa`, `_ed25519`,
+`_ecdsa`, `_dsa`; and paths containing `.ssh`, `.gnupg`, or `.aws` components.
+The marker does not expand the scope or redact the file's contents.
+
+Every result has a local audit copy under
+`<state-dir>/sessions/<YYYYMMDDTHHMMSSZ>-<first 8 hex of session id>/`, mode
+`0700`. `jobs.log` records events as append-only JSON lines.
+`results/<result seq>.txt` contains exactly the redacted lines of each result
+message, written once with mode `0400`. `session.json` records session
+metadata and is rewritten at join and exit. `mapping.json` holds original
+values and is updated after results that add values. Placeholders stay
+consistent across the session. These files contain no token; protect the
+mapping as sensitive data.
+
+The local MCP stores a version 2 session file at the same path and with the
+same permissions as in one-shot mode. A live file includes the token, content
+root, and sequence counters. Compromise of that file exposes the session's
+content keys; token-only protection does not cover that case.
+
+The default relay permits live sessions without an account in phase 2. The
+TTL defaults to 8 hours and is capped at 24 hours. Ctrl-C, relay termination,
+or expiry ends the collector session. The local audit copy remains;
+`--retention` prunes old `sessions/` copies before a later session, default
+`720h` (30 days), with `0` keeping everything.
 
 ## Threats and controls
 
@@ -130,6 +198,23 @@ can drop or delay messages.
 The collector is third-party code on a production machine. The design limits
 that exposure with a small executor, minimal dependencies, reproducible signed
 builds, an unprivileged user, and no listener.
+
+The install script is the trust root of the install path; verify it with
+`cosign verify-blob` if you do not trust the host that served it. The script
+checks the binary against an embedded hash; it does not run cosign itself.
+See [Install and verify](docs/install.md#verify-the-script).
+
+Run-once mode deletes the temporary directory on exit. With root, it stages
+state there as `nobody`, then copies it to the invoking user's
+`~/.local/state/aken` on exit, resolving the home from the passwd database,
+or to `/root/.local/state/aken` without a non-root invoking user. The user's
+home is untouched during the run. Other daemons running as the shared
+`nobody` identity can read the staged copy. Without root it uses
+`${XDG_STATE_HOME:-$HOME/.local/state}/aken`. Nothing changes outside the
+temporary directory and the invoking user's own state directory; it creates
+no user and changes no group membership. The local copy remains, including
+the mapping of placeholders to original sensitive values. It cannot prevent
+journal entries from sshd or sudo.
 
 Alert fatigue can turn approvals into theatre. Batching, summaries, and entropy
 flags help the human notice what matters.

@@ -265,3 +265,136 @@ func TestRelayErrorMessage(t *testing.T) {
 		})
 	}
 }
+
+func TestPersistentRelayClient(t *testing.T) {
+	server := httptest.NewServer(devrelay.New())
+	defer server.Close()
+	token := protocol.NewToken()
+	id := token.SessionID()
+	client, err := protocol.NewRelayClient(server.URL, token.RelayCredential())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	ck, cm, mk, mm := [32]byte{1}, [32]byte{2}, [32]byte{3}, [32]byte{4}
+	created, err := client.CreatePersistentSession(ctx, id, 0, ck, cm)
+	if err != nil || created.Mode != "session" || created.Joined || created.CollectorKey != protocol.EncodeKey(ck) || created.CollectorMAC != protocol.EncodeKey(cm) {
+		t.Fatal("create", created, err)
+	}
+	if info, ok, err := client.WaitJoin(ctx, id, 0); err != nil || ok || info != (protocol.JoinInfo{}) {
+		t.Fatal("empty join", info, ok, err)
+	}
+	joined, err := client.Join(ctx, id, mk, mm, "chat")
+	if err != nil || joined.MCPKey != protocol.EncodeKey(mk) || joined.MCPMAC != protocol.EncodeKey(mm) || joined.CollectorKey != created.CollectorKey || joined.CollectorMAC != created.CollectorMAC || joined.Via != "chat" || joined.JoinedAt.IsZero() {
+		t.Fatal("join", joined, err)
+	}
+	if got, ok, err := client.WaitJoin(ctx, id, 0); err != nil || !ok || got != joined {
+		t.Fatal("wait join", got, ok, err)
+	}
+	for _, result := range []bool{false, true} {
+		post, poll, size := client.PostJob, client.PollJobs, protocol.MaxJobBytes
+		if result {
+			post, poll, size = client.PostResult, client.PollResults, protocol.MaxResultBytes
+		}
+		if got, err := poll(ctx, id, 0); err != nil || got != nil {
+			t.Fatal("empty poll", err)
+		}
+		for seq := uint64(1); seq <= 3; seq++ {
+			e := protocol.Envelope{Version: 1, SessionID: id.String(), Seq: seq, Class: 1, Payload: bytes.Repeat([]byte{byte(seq)}, size)}
+			if err := post(ctx, id, e); err != nil {
+				t.Fatal("post", err)
+			}
+			if err := post(ctx, id, e); err != nil {
+				t.Fatal("replay", err)
+			}
+		}
+		got, err := poll(ctx, id, 0)
+		if err != nil || len(got) != 3 {
+			t.Fatal("poll", len(got), err)
+		}
+		for i, e := range got {
+			if e.Seq != uint64(i+1) || !bytes.Equal(e.Payload, bytes.Repeat([]byte{byte(i + 1)}, size)) {
+				t.Fatal("messages changed")
+			}
+		}
+	}
+	if err := client.DeleteSession(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSessionClientWaitAndOldRelay(t *testing.T) {
+	for _, method := range []string{"join", "jobs", "results"} {
+		for _, tt := range []struct {
+			wait  time.Duration
+			query string
+		}{{0, "0"}, {1500 * time.Millisecond, "1"}, {31 * time.Second, "30"}, {-time.Second, "0"}} {
+			t.Run(method+tt.query, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != "GET" || !strings.HasSuffix(r.URL.Path, "/"+method) || r.URL.RawQuery != "wait="+tt.query || r.Header.Get(protocol.ProtocolHeader) != "1" || r.Header.Get("Authorization") != protocol.AuthorizationHeader([32]byte{}) {
+						t.Error("incorrect poll request")
+					}
+					w.WriteHeader(204)
+				}))
+				defer server.Close()
+				client, err := protocol.NewRelayClient(server.URL, [32]byte{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				switch method {
+				case "join":
+					info, ok, err := client.WaitJoin(t.Context(), protocol.SessionID{}, tt.wait)
+					if err != nil || ok || info != (protocol.JoinInfo{}) {
+						t.Fatal("204 join", err)
+					}
+				case "jobs":
+					got, err := client.PollJobs(t.Context(), protocol.SessionID{}, tt.wait)
+					if err != nil || got != nil {
+						t.Fatal("204 jobs", err)
+					}
+				case "results":
+					got, err := client.PollResults(t.Context(), protocol.SessionID{}, tt.wait)
+					if err != nil || got != nil {
+						t.Fatal("204 results", err)
+					}
+				}
+			})
+		}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/join") {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = io.WriteString(w, `{"mode":"blob"}`)
+	}))
+	defer server.Close()
+	client, err := protocol.NewRelayClient(server.URL, [32]byte{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Session(t.Context(), protocol.SessionID{}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Join(t.Context(), protocol.SessionID{}, [32]byte{}, [32]byte{}, "cli")
+	if !protocol.IsNotFound(err) {
+		t.Fatal("old relay join", err)
+	}
+	_, _, err = client.WaitJoin(t.Context(), protocol.SessionID{}, 0)
+	if !protocol.IsNotFound(err) {
+		t.Fatal("old relay wait", err)
+	}
+}
+
+func TestSessionKeyEncoding(t *testing.T) {
+	key := [32]byte{255, 254, 253}
+	encoded := protocol.EncodeKey(key)
+	if got, ok := protocol.DecodeKey(encoded); !ok || got != key {
+		t.Fatal("key round trip")
+	}
+	for _, value := range []string{"", encoded + "=", encoded + "\n", encoded[:42], strings.Repeat("/", 43), strings.Repeat("A", 42) + "B"} {
+		if _, ok := protocol.DecodeKey(value); ok {
+			t.Fatal("invalid key accepted")
+		}
+	}
+}

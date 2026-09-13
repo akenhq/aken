@@ -57,7 +57,7 @@ func DefaultStateDir() string {
 	}
 	return filepath.Join(os.Getenv("HOME"), ".local", "state", "aken")
 }
-func prune(runsDir string, olderThan time.Time) error {
+func Prune(runsDir string, olderThan time.Time) error {
 	entries, err := os.ReadDir(runsDir)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil

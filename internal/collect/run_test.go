@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/akenhq/aken/internal/devrelay"
+	"github.com/akenhq/aken/internal/screen"
 	"github.com/akenhq/aken/protocol"
 )
 
@@ -158,7 +159,7 @@ func TestUploadRoundTrip(t *testing.T) {
 			}
 			progress := "Creating the session on " + server.URL + "...\n"
 			for i := uint32(1); i <= manifest.ChunkCount; i++ {
-				progress += fmt.Sprintf("Uploading chunk %d of %d (%s of %s)...\n", i, manifest.ChunkCount, sizeText(min(int64(i)*protocol.ChunkSize, manifest.TotalBytes)), sizeText(manifest.TotalBytes))
+				progress += fmt.Sprintf("Uploading chunk %d of %d (%s of %s)...\n", i, manifest.ChunkCount, screen.SizeText(min(int64(i)*protocol.ChunkSize, manifest.TotalBytes)), screen.SizeText(manifest.TotalBytes))
 			}
 			progress += "Uploading the manifest...\nUploaded "
 			if !strings.Contains(out.String(), progress) || !strings.Contains(out.String(), "; 1 hex id or hashes not listed.") {
