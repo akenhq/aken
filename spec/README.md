@@ -10,15 +10,15 @@ MCP and relays.
 | File | Status | Scope |
 |---|---|---|
 | [token.md](token.md) | Normative | Token encoding, parsing and key derivation |
-| [envelope.md](envelope.md) | Draft, phase 2 | Persistent job and result envelopes |
+| [envelope.md](envelope.md) | Normative, phase 2 | Authenticated exchange and persistent job and result envelopes |
 | [blob.md](blob.md) | Normative, phase 1 | One-shot encrypted artifacts |
-| [relay-api.md](relay-api.md) | Normative, phase 1 | Relay requests, authentication and caps |
+| [relay-api.md](relay-api.md) | Normative, phase 2 | Relay requests, authentication, queues and caps |
 
 ## Status
 
 The overall protocol is a draft. Each file states whether it is normative or a
-draft. Tokens, blobs, and relay API v0 are implemented in phase 1. The
-protocol has not been professionally reviewed. A public call for review is open
+draft. Tokens and blobs are implemented in phase 1. Authenticated sessions,
+envelopes and relay queues are implemented in phase 2. The protocol has not been professionally reviewed. A public call for review is open
 through [GitHub issues](https://github.com/akenhq/aken/issues).
 
 ## Versioning
@@ -43,6 +43,12 @@ content roots, derived keys, generated plaintext definitions, chunk ciphertext
 or hashes and prefixes, and exact manifest JSON and ciphertext.
 [protocol/blob_test.go](../protocol/blob_test.go) checks these values and decrypts
 the chunks and manifests.
+
+[vectors/session-v1.json](vectors/session-v1.json) contains two authenticated
+X25519 exchanges with fixed private keys, MACs, shared secrets, transcript hashes,
+derived keys, and exact canonical envelopes and ciphertexts for both directions.
+[protocol/session_test.go](../protocol/session_test.go) checks every value and
+opens and seals the pinned envelopes.
 
 CI's secret scanner treats vector-shaped values
 in this directory as public test data; `.gitleaks.toml` at the repository root

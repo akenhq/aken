@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "labels": {
+    "transcript": "aken/session/v1",
+    "content_root_info": "content-root",
+    "job_key_info": "job-key",
+    "result_key_info": "result-key"
+  },
+  "vectors": [
+    {
+      "name": "zero token, repeated private bytes",
+      "token": "akn1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "session_id": "94d74629849d564425fc1737a1388e6d",
+      "exchange_key_hex": "ed839f559f8ec2cf2e25dfd5119ca28b9a8399ae9017397e862398656267edce",
+      "collector_private_hex": "0101010101010101010101010101010101010101010101010101010101010101",
+      "collector_public_hex": "a4e09292b651c278b9772c569f5fa9bb13d906b46ab68c9df9dc2b4409f8a209",
+      "collector_mac_hex": "655f655ed93c9a125abcb9e0667dd2cb2b8f13249654f182e2b990499d1f3b49",
+      "mcp_private_hex": "0202020202020202020202020202020202020202020202020202020202020202",
+      "mcp_public_hex": "ce8d3ad1ccb633ec7b70c17814a5c76ecd029685050d344745ba05870e587d59",
+      "mcp_mac_hex": "d4b658b94a4a4529165b3fe7d1ee76dd84c8205e065d18fcd3e38994c03f7620",
+      "shared_secret_hex": "2ed76ab549b1e73c031eb49c9448f0798aea81b698279a0c3dc3e49fbfc4b953",
+      "transcript_hash_hex": "a79abad73a539cd87f44a6b2ff5f4bf31da9534e6ebe2c226bfa6a93d27a29c2",
+      "content_root_hex": "f8ce5a7685759b4fb058ca74e8d627574c5830a06abdb522be19a462e5d57208",
+      "job_key_hex": "7e54f0c46f9a5f5dadc083221e20e23a1f34a777a1769ceabb0d4647f86fed67",
+      "result_key_hex": "9369082592d9d955cc2ea291acf1e8073c5d66c90c101a15c9e0a420df55026b",
+      "job": {
+        "seq": 1,
+        "class": 1,
+        "plaintext": "{\"id\":\"j1\",\"name\":\"df\",\"params\":{}}",
+        "canonical_hex": "0194d74629849d564425fc1737a1388e6d00000000000000010100000033",
+        "ciphertext_hex": "61d6e793f272d1cd384a56635ac50e40f181807dc9e691463259d344c29c4db43b8332e921c60e852c0bc428d3e906bd51a38c"
+      },
+      "result": {
+        "seq": 1,
+        "class": 1,
+        "plaintext": "{\"id\":\"j1\",\"status\":\"ok\",\"lines\":[\"Filesystem Size Used Avail Use% Mounted on\"],\"redaction\":{\"lines_redacted\":0,\"by_category\":{},\"flags\":0}}",
+        "canonical_hex": "0194d74629849d564425fc1737a1388e6d0000000000000001010000009c",
+        "ciphertext_hex": "db603dc9d9f048d5936df1f014cdb20908f620f1734252c477aa398ab6f30777836400540cef8173a03a07d8c8d6c1af83d08bc9485d026d45b026848e6c8f11ffc6973f42bd80c7c4eda09f3a93014ec3a50a08e187e80efb7b7eaf6dca8a88e7cccf81d0c6af2a0367cd1b6c07914c4c340836fcf9c139604abd2563d2c33fe81e3002c89c78aed426719f42081887f7f3c74f5f15b1cae8909791"
+      }
+    },
+    {
+      "name": "fixed arbitrary keys",
+      "token": "akn1_ze2sewyab3ebp7rpmna4a4nz6lswbn3ghxonwudmmsxsekvt36qa",
+      "session_id": "45df2145e4ffeb9195547a2f26f466b2",
+      "exchange_key_hex": "8e52544b884b6688b4f2d4f4906acc4a0a2375f7224b3c6ba8445d6b6ef92146",
+      "collector_private_hex": "2cf516979515811af656a3ecc20c3b44670490114285698db83db09512ff63f4",
+      "collector_public_hex": "fb844da8a6963dd75c5262e19fa8cc82ef71113946e7f112e0421be9195bae06",
+      "collector_mac_hex": "64667171d10e6ca8be8d0a32597050f47e61c934f5ffbcd930c35cee95528ce5",
+      "mcp_private_hex": "13d26433cf23c6dc512e13ff6bd59a662745e098f57a7bad6a59a53902afa6f5",
+      "mcp_public_hex": "66519b7e1668b27a4b0d056f5a35da8138d5fd5c01871d2d06b86c5d0cd02d07",
+      "mcp_mac_hex": "463393ad094df17238fc8397de84d289a0921a219c8cf7accd57edeae5f1af68",
+      "shared_secret_hex": "07a9cdb7cb87c24a73b5d0be4db7eb0d0d55717f308a51f9dd5e0caac7ba404a",
+      "transcript_hash_hex": "06a966893d34836ae645e55c6459c2db610b9e44e54b1814019d1e00b49c3905",
+      "content_root_hex": "0c0bddce516103b6ac52bbabd89d9aa4df241d350c2e98ec7d36bcd0a5cc372c",
+      "job_key_hex": "fb693074d1a15834562d84a142a7b24bb8f8fe85371dcc1fa1a74fac06891c96",
+      "result_key_hex": "5735ddeef6cc22c90998bb8af1575c994f773ad41aafdbe1861a2238867cb12f",
+      "job": {
+        "seq": 4294967295,
+        "class": 1,
+        "plaintext": "{\"id\":\"j1\",\"name\":\"df\",\"params\":{}}",
+        "canonical_hex": "0145df2145e4ffeb9195547a2f26f466b200000000ffffffff0100000033",
+        "ciphertext_hex": "e9b3332b4dbc57e7477d51855ea94e8706b0b9e621e7ae31d2db187dc75c11e592260d81779e1370fc989e68cb154649e4f4af"
+      },
+      "result": {
+        "seq": 258,
+        "class": 1,
+        "plaintext": "{\"id\":\"j1\",\"status\":\"ok\",\"lines\":[\"Filesystem Size Used Avail Use% Mounted on\"],\"redaction\":{\"lines_redacted\":0,\"by_category\":{},\"flags\":0}}",
+        "canonical_hex": "0145df2145e4ffeb9195547a2f26f466b20000000000000102010000009c",
+        "ciphertext_hex": "dd2bb6524ba3a3b4bf6b07e0aa884f595a7539cf874a6253606176c034f61a129071ec7290c25bce02d0748127a4ff9a4a8bd9ba47f3d1efb31789a894f93a6c4f5ef3bb0d177bd23cfc3ca5f18081c956fe9b93da74f104b39b20ee8b1962ae0be222d98fcd90c423acc1f7943668bcc16c0408e541e23f445de8e7b299da49a38cbe7d56f28ca6639531acf8854175ee54ff55504d9fe8b5dfb9ec"
+      }
+    }
+  ]
+}

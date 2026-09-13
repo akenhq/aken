@@ -159,15 +159,16 @@ func lineResult(lines []artifact.Line, tail bool, readTo int) (*mcp.CallToolResu
 }
 
 func (s *Server) tail(ctx context.Context, req *mcp.CallToolRequest, in tailArgs) (*mcp.CallToolResult, any, error) {
-	in.N = defaultInt(req, "n", in.N, 100)
-	if in.N < 1 || in.N > 500 {
-		return nil, nil, fmt.Errorf("n: must be between 1 and 500")
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a, _, err := s.artifact(ctx)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	in.N = defaultInt(req, "n", in.N, 100)
+	if in.N < 1 || in.N > 500 {
+		return nil, nil, fmt.Errorf("n: must be between 1 and 500")
 	}
 	source, err := a.Source(in.Source)
 	if err != nil {
@@ -176,17 +177,18 @@ func (s *Server) tail(ctx context.Context, req *mcp.CallToolRequest, in tailArgs
 	return lineResult(source.Tail(in.N), true, 0)
 }
 func (s *Server) read(ctx context.Context, _ *mcp.CallToolRequest, in readArgs) (*mcp.CallToolResult, any, error) {
-	if in.From < 1 {
-		return nil, nil, fmt.Errorf("from: must be at least 1")
-	}
-	if in.To < in.From {
-		return nil, nil, fmt.Errorf("to: must be at least from")
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a, _, err := s.artifact(ctx)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	if in.From < 1 {
+		return nil, nil, fmt.Errorf("from: must be at least 1")
+	}
+	if in.To < in.From {
+		return nil, nil, fmt.Errorf("to: must be at least from")
 	}
 	source, err := a.Source(in.Source)
 	if err != nil {
@@ -200,18 +202,19 @@ func (s *Server) read(ctx context.Context, _ *mcp.CallToolRequest, in readArgs) 
 	return lineResult(source.Read(in.From, end), false, max(1, to))
 }
 func (s *Server) context(ctx context.Context, req *mcp.CallToolRequest, in contextArgs) (*mcp.CallToolResult, any, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, _, err := s.artifact(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	in.Around = defaultInt(req, "around", in.Around, 20)
 	if in.Line < 1 {
 		return nil, nil, fmt.Errorf("line: must be at least 1")
 	}
 	if in.Around < 0 || in.Around > 200 {
 		return nil, nil, fmt.Errorf("around: must be between 0 and 200")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	a, _, err := s.artifact(ctx)
-	if err != nil {
-		return nil, nil, err
 	}
 	source, err := a.Source(in.Source)
 	if err != nil {
@@ -228,6 +231,11 @@ func (s *Server) join(ctx context.Context, _ *mcp.CallToolRequest, in joinArgs) 
 		return nil, nil, err
 	}
 	defer token.Zero()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := session.CheckJoin(s.SessionPath, token); err != nil {
+		return nil, nil, err
+	}
 	relay := s.Relay
 	if relay == "" {
 		relay = protocol.DefaultRelayURL
@@ -243,17 +251,29 @@ func (s *Server) join(ctx context.Context, _ *mcp.CallToolRequest, in joinArgs) 
 	if err != nil {
 		return nil, nil, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	stored := session.Session{Version: 1, Token: token.Encode(), Relay: client.BaseURL, SessionID: token.SessionID().String(), ExpiresAt: info.ExpiresAt, JoinedAt: s.now(), JoinedVia: "chat"}
+	stored, err := session.Join(ctx, client, token, info, "chat", s.now())
+	if err != nil {
+		return nil, nil, fmt.Errorf("aken-mcp: %w", err)
+	}
 	if err := session.Save(s.SessionPath, stored); err != nil {
 		return nil, nil, err
 	}
 	s.loaded, s.loadedFor = nil, ""
+	s.results, s.resultsFor = nil, ""
+	if stored.Live() {
+		return result(fmt.Sprintf("Joined live session %s via chat. It expires at %s. This token has been in the chat transcript.", stored.SessionID, stored.ExpiresAt.UTC().Format(time.RFC3339)), map[string]any{"session_id": stored.SessionID, "expires_at": stored.ExpiresAt.UTC().Format(time.RFC3339)})
+	}
 	return result(fmt.Sprintf("Joined session %s. The artifact expires at %s. This token has been in the chat transcript.", stored.SessionID, stored.ExpiresAt.Format(time.RFC3339)), map[string]any{"session_id": stored.SessionID, "expires_at": stored.ExpiresAt.Format(time.RFC3339)})
 }
 
 func (s *Server) search(ctx context.Context, req *mcp.CallToolRequest, in searchArgs) (*mcp.CallToolResult, any, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, stored, err := s.artifact(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	in.Max = defaultInt(req, "max", in.Max, 50)
 	if in.Before < 0 || in.Before > 50 {
 		return nil, nil, fmt.Errorf("before: must be between 0 and 50")
@@ -267,12 +287,6 @@ func (s *Server) search(ctx context.Context, req *mcp.CallToolRequest, in search
 	regex, err := regexp.Compile(in.Regex)
 	if err != nil {
 		return nil, nil, fmt.Errorf("regex: invalid RE2 regular expression")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	a, stored, err := s.artifact(ctx)
-	if err != nil {
-		return nil, nil, err
 	}
 	position := struct {
 		SessionID string `json:"sid"`

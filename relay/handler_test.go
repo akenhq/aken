@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -130,7 +131,7 @@ func TestHandlerRejections(t *testing.T) {
 		{"large manifest before chunks", "PUT", base + "/blob/manifest", strings.Repeat("x", protocol.MaxManifestBytes+1), "1", auth, 413, "too_large"},
 		{"unknown path", "GET", "/unknown", "", "", "", 404, "not_found"},
 		{"no listing", "GET", "/v0/sessions", "", "1", auth, 404, "not_found"},
-		{"reserved path", "POST", base + "/join", "", "1", auth, 404, "not_found"},
+		{"session path on blob", "POST", base + "/join", "", "1", auth, 409, "wrong_mode"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			store := NewMemoryStore()
@@ -241,5 +242,323 @@ func TestHandlerStoreErrors(t *testing.T) {
 		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil || response.Message != tt.message {
 			t.Fatalf("error response = %+v, error = %v", response, err)
 		}
+	}
+}
+
+func sessionFixture(t *testing.T, s http.Handler) (protocol.SessionID, string, string) {
+	t.Helper()
+	token := protocol.NewToken()
+	id := token.SessionID()
+	path, auth := "/v0/sessions/"+id.String(), protocol.AuthorizationHeader(token.RelayCredential())
+	body := fmt.Sprintf(`{"mode":"session","collector_key":%q,"collector_mac":%q}`, protocol.EncodeKey([32]byte{1}), protocol.EncodeKey([32]byte{2}))
+	request(t, s, "PUT", path, []byte(body), "1", auth, 201, "")
+	return id, path, auth
+}
+
+func joinBody() []byte {
+	return []byte(fmt.Sprintf(`{"mcp_key":%q,"mcp_mac":%q,"via":"cli"}`, protocol.EncodeKey([32]byte{3}), protocol.EncodeKey([32]byte{4})))
+}
+
+func TestPersistentCreate(t *testing.T) {
+	key := protocol.EncodeKey([32]byte{})
+	for _, body := range []string{
+		`{"mode":"other","chunk_count":1}`,
+		`{"mode":"session"}`,
+		fmt.Sprintf(`{"mode":"session","collector_key":%q}`, key),
+		fmt.Sprintf(`{"mode":"session","collector_key":%q,"collector_mac":%q,"chunk_count":1}`, key, key),
+		fmt.Sprintf(`{"mode":"session","collector_key":%q,"collector_mac":%q}`, key+"=", key),
+		fmt.Sprintf(`{"mode":"session","collector_key":%q,"collector_mac":"AA"}`, key),
+	} {
+		request(t, NewHandler(NewMemoryStore(), Options{}), "PUT", "/v0/sessions/"+protocol.SessionID{}.String(), []byte(body), "1", protocol.AuthorizationHeader([32]byte{}), 400, "bad_request")
+	}
+	store := NewMemoryStore()
+	s := NewHandler(store, Options{})
+	id, path, auth := sessionFixture(t, s)
+	w := request(t, s, "GET", path, nil, "1", auth, 200, "")
+	var info protocol.SessionInfo
+	if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode != "session" || info.Joined || info.ChunkCount != 0 || info.ChunksStored != 0 || info.ManifestStored || info.CollectorKey != protocol.EncodeKey([32]byte{1}) || info.CollectorMAC != protocol.EncodeKey([32]byte{2}) || time.Until(info.ExpiresAt) > protocol.DefaultSessionTTL || time.Until(info.ExpiresAt) < protocol.DefaultSessionTTL-time.Minute {
+		t.Fatal("session metadata", info)
+	}
+	meta, err := store.Session(t.Context(), id)
+	if err != nil || meta.Mode != "session" || meta.CollectorKey != ([32]byte{1}) || meta.CollectorMAC != ([32]byte{2}) {
+		t.Fatal("store metadata", err)
+	}
+	for _, endpoint := range []string{"/blob/chunks/0", "/blob/manifest"} {
+		for _, method := range []string{"GET", "PUT"} {
+			request(t, s, method, path+endpoint, nil, "1", auth, 409, "wrong_mode")
+		}
+	}
+	restarted := NewHandler(store, Options{})
+	request(t, restarted, "GET", path, nil, "1", auth, 404, "not_found")
+	request(t, restarted, "GET", path+"/join", nil, "1", auth, 404, "not_found")
+}
+
+func TestPersistentJoinAndRouting(t *testing.T) {
+	s := NewHandler(NewMemoryStore(), Options{})
+	_, path, auth := sessionFixture(t, s)
+	for _, suffix := range []string{"/join", "/jobs", "/results"} {
+		for _, method := range []string{"GET", "POST"} {
+			request(t, s, method, path+suffix, nil, "", auth, 426, "unsupported_version")
+			request(t, s, method, path+suffix, nil, "1", protocol.AuthorizationHeader([32]byte{}), 404, "not_found")
+		}
+		for _, method := range []string{"HEAD", "PUT", "PATCH", "DELETE"} {
+			request(t, s, method, path+suffix, nil, "1", auth, 405, "method_not_allowed")
+		}
+		for _, wait := range []string{"31", "-1", "bad", "0.5", "", "1&wait=2"} {
+			request(t, s, "GET", path+suffix+"?wait="+wait, nil, "1", auth, 400, "bad_request")
+		}
+		w := request(t, s, "GET", path+suffix, nil, "1", auth, 204, "")
+		if w.Body.Len() != 0 {
+			t.Fatal("204 has body")
+		}
+	}
+	for _, body := range [][]byte{[]byte(`{`), []byte(`null`), []byte(`{}`), bytes.Replace(joinBody(), []byte(`"cli"`), []byte(`"web"`), 1), bytes.Replace(joinBody(), []byte(`"mcp_key"`), []byte(`"missing"`), 1), bytes.Replace(joinBody(), []byte(`"mcp_mac"`), []byte(`"missing"`), 1)} {
+		request(t, s, "POST", path+"/join", body, "1", auth, 400, "bad_request")
+	}
+	w := request(t, s, "POST", path+"/join", joinBody(), "1", auth, 201, "")
+	var joined protocol.JoinInfo
+	if err := json.Unmarshal(w.Body.Bytes(), &joined); err != nil || joined.JoinedAt.IsZero() || joined.Via != "cli" {
+		t.Fatal("join", err)
+	}
+	request(t, s, "POST", path+"/join", joinBody(), "1", auth, 409, "already_exists")
+	got := request(t, s, "GET", path+"/join?wait=30", nil, "1", auth, 200, "")
+	if got.Body.String() != w.Body.String() {
+		t.Fatal("join changed")
+	}
+	w = request(t, s, "GET", path, nil, "1", auth, 200, "")
+	var info protocol.SessionInfo
+	if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil || !info.Joined {
+		t.Fatal("joined metadata", err)
+	}
+	blob := "/v0/sessions/" + protocol.SessionID{}.String()
+	request(t, s, "PUT", blob, []byte(`{"chunk_count":1}`), "1", auth, 201, "")
+	for _, suffix := range []string{"/join", "/jobs", "/results"} {
+		for _, method := range []string{"GET", "POST"} {
+			request(t, s, method, blob+suffix, nil, "1", auth, 409, "wrong_mode")
+		}
+	}
+}
+
+func TestPersistentQueueValidation(t *testing.T) {
+	for _, kind := range []string{"jobs", "results"} {
+		t.Run(kind, func(t *testing.T) {
+			s := NewHandler(NewMemoryStore(), Options{})
+			id, path, auth := sessionFixture(t, s)
+			path += "/" + kind
+			request(t, s, "POST", path, []byte(`bad`), "1", auth, 409, "not_joined")
+			request(t, s, "POST", strings.TrimSuffix(path, "/"+kind)+"/join", joinBody(), "1", auth, 201, "")
+			capBytes := protocol.MaxJobBytes
+			if kind == "results" {
+				capBytes = protocol.MaxResultBytes
+			}
+			envelope := protocol.Envelope{Version: 1, SessionID: id.String(), Seq: 1, Class: 1, Payload: make([]byte, 17)}
+			post := func(e protocol.Envelope, status int, code string) {
+				t.Helper()
+				body, err := json.Marshal(e)
+				if err != nil {
+					t.Fatal(err)
+				}
+				w := request(t, s, "POST", path, body, "1", auth, status, code)
+				if status == 202 && w.Body.Len() != 0 {
+					t.Fatal("202 has body")
+				}
+			}
+			for _, tt := range []struct {
+				name   string
+				change func(*protocol.Envelope)
+				status int
+				code   string
+			}{
+				{"version", func(e *protocol.Envelope) { e.Version = 2 }, 400, "bad_request"},
+				{"id", func(e *protocol.Envelope) { e.SessionID = protocol.SessionID{}.String() }, 400, "bad_request"},
+				{"seq zero", func(e *protocol.Envelope) { e.Seq = 0 }, 400, "bad_request"},
+				{"seq overflow", func(e *protocol.Envelope) { e.Seq = protocol.MaxSessionSeq + 1 }, 400, "bad_request"},
+				{"class zero", func(e *protocol.Envelope) { e.Class = 0 }, 400, "bad_request"},
+				{"class four", func(e *protocol.Envelope) { e.Class = 4 }, 400, "bad_request"},
+				{"short", func(e *protocol.Envelope) { e.Payload = make([]byte, 16) }, 400, "bad_request"},
+				{"class", func(e *protocol.Envelope) { e.Class = 2 }, 403, "class_not_allowed"},
+				{"exec", func(e *protocol.Envelope) { e.Class = 3 }, 403, "class_not_allowed"},
+				{"large", func(e *protocol.Envelope) { e.Payload = make([]byte, capBytes+1) }, 413, "too_large"},
+				{"class before size", func(e *protocol.Envelope) { e.Class = 2; e.Payload = make([]byte, capBytes+1) }, 403, "class_not_allowed"},
+				{"invalid before size", func(e *protocol.Envelope) { e.Version = 2; e.Payload = make([]byte, capBytes+1) }, 400, "bad_request"},
+				{"gap", func(e *protocol.Envelope) { e.Seq = 3 }, 409, "bad_sequence"},
+			} {
+				t.Run(tt.name, func(t *testing.T) { e := envelope; tt.change(&e); post(e, tt.status, tt.code) })
+			}
+			for _, body := range []string{`{`, `null`, `{} {}`, `{"payload":"!"}`} {
+				request(t, s, "POST", path, []byte(body), "1", auth, 400, "bad_request")
+			}
+			for seq := uint64(1); seq <= 64; seq++ {
+				e := envelope
+				e.Seq = seq
+				post(e, 202, "")
+			}
+			e := envelope
+			e.Seq = 64
+			post(e, 202, "")
+			e.Payload = bytes.Repeat([]byte{1}, 17)
+			post(e, 409, "bad_sequence")
+			e = envelope
+			e.Seq = 66
+			post(e, 409, "bad_sequence")
+			e.Seq = 65
+			post(e, 429, "queue_full")
+			w := request(t, s, "GET", path, nil, "1", auth, 200, "")
+			var messages protocol.Messages
+			if err := json.Unmarshal(w.Body.Bytes(), &messages); err != nil || len(messages.Messages) != 64 {
+				t.Fatal("queued messages", err)
+			}
+			for i, e := range messages.Messages {
+				if e.Seq != uint64(i+1) {
+					t.Fatal("queue order")
+				}
+			}
+			e = envelope
+			e.Seq = 64
+			post(e, 202, "")
+			request(t, s, "GET", path, nil, "1", auth, 204, "")
+			e.Seq = 1
+			post(e, 409, "bad_sequence")
+			e.Seq = 65
+			post(e, 202, "")
+		})
+	}
+}
+
+func TestPersistentPollLifecycle(t *testing.T) {
+	for _, action := range []string{"join", "jobs", "results", "delete", "expiry", "sweep", "cancel"} {
+		t.Run(action, func(t *testing.T) {
+			store := NewMemoryStore()
+			var offset atomic.Int64
+			s := NewHandler(store, Options{Now: func() time.Time { return time.Now().Add(time.Duration(offset.Load())) }})
+			id, path, auth := sessionFixture(t, s)
+			live := s.live.get(id)
+			kind := "jobs"
+			if action == "join" {
+				kind = "join"
+			}
+			if action == "results" {
+				kind = "results"
+			}
+			if action != "join" {
+				request(t, s, "POST", path+"/join", joinBody(), "1", auth, 201, "")
+			}
+			if action == "expiry" {
+				live.expiresAt = time.Now().Add(50 * time.Millisecond)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			r := httptest.NewRequest("GET", path+"/"+kind+"?wait=30", nil).WithContext(ctx)
+			r.Header.Set(protocol.ProtocolHeader, "1")
+			r.Header.Set("Authorization", auth)
+			w := httptest.NewRecorder()
+			done := make(chan struct{})
+			go func() { s.ServeHTTP(w, r); close(done) }()
+			// No event may be lost between reading the queue and starting the wait.
+			switch action {
+			case "join":
+				request(t, s, "POST", path+"/join", joinBody(), "1", auth, 201, "")
+			case "jobs", "results":
+				body, err := json.Marshal(protocol.Envelope{Version: 1, SessionID: id.String(), Seq: 1, Class: 1, Payload: make([]byte, 17)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				request(t, s, "POST", path+"/"+kind, body, "1", auth, 202, "")
+			case "delete":
+				request(t, s, "DELETE", path, nil, "1", auth, 204, "")
+			case "sweep":
+				offset.Store(int64(9 * time.Hour))
+				s.Sweep()
+			case "cancel":
+				cancel()
+			}
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("poll did not wake")
+			}
+			want := 200
+			if action == "delete" || action == "expiry" || action == "sweep" {
+				want = 404
+			}
+			if action != "cancel" && w.Code != want {
+				t.Fatal("poll status", w.Code, w.Body.String())
+			}
+			if action == "expiry" || action == "sweep" || action == "delete" {
+				if s.live.get(id) != nil {
+					t.Fatal("live session retained")
+				}
+			}
+		})
+	}
+}
+
+func TestPersistentConcurrentDelivery(t *testing.T) {
+	s := NewHandler(NewMemoryStore(), Options{})
+	id, path, auth := sessionFixture(t, s)
+	request(t, s, "POST", path+"/join", joinBody(), "1", auth, 201, "")
+	body, err := json.Marshal(protocol.Envelope{Version: 1, SessionID: id.String(), Seq: 1, Class: 1, Payload: make([]byte, 17)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	responses := make(chan *httptest.ResponseRecorder, 8)
+	send := func(method string, body []byte) {
+		r := httptest.NewRequest(method, path+"/jobs", bytes.NewReader(body))
+		r.Header.Set(protocol.ProtocolHeader, "1")
+		r.Header.Set("Authorization", auth)
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		responses <- w
+	}
+	for range 8 {
+		go send("POST", body)
+	}
+	for range 8 {
+		if w := <-responses; w.Code != 202 {
+			t.Fatal("concurrent replay", w.Code)
+		}
+	}
+	for range 8 {
+		go send("GET", nil)
+	}
+	delivered := 0
+	for range 8 {
+		w := <-responses
+		switch w.Code {
+		case 200:
+			var messages protocol.Messages
+			if err := json.Unmarshal(w.Body.Bytes(), &messages); err != nil {
+				t.Fatal(err)
+			}
+			delivered += len(messages.Messages)
+		case 204:
+		default:
+			t.Fatal("concurrent poll", w.Code)
+		}
+	}
+	if delivered != 1 {
+		t.Fatal("delivery count", delivered)
+	}
+}
+
+func TestOldPollCannotDeleteReplacement(t *testing.T) {
+	store := NewMemoryStore()
+	s := NewHandler(store, Options{})
+	id, path, auth := sessionFixture(t, s)
+	old := s.live.get(id)
+	request(t, s, "DELETE", path, nil, "1", auth, 204, "")
+	body := fmt.Sprintf(`{"mode":"session","collector_key":%q,"collector_mac":%q}`, protocol.EncodeKey([32]byte{1}), protocol.EncodeKey([32]byte{2}))
+	request(t, s, "PUT", path, []byte(body), "1", auth, 201, "")
+	w := httptest.NewRecorder()
+	s.poll(w, httptest.NewRequest("GET", path+"/jobs", nil), id, old, "jobs", 0)
+	if w.Code != 404 {
+		t.Fatal("old poll", w.Code)
+	}
+	request(t, s, "GET", path, nil, "1", auth, 200, "")
+	if s.live.get(id) == nil || s.live.get(id) == old {
+		t.Fatal("replacement lost")
 	}
 }

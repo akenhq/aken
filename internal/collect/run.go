@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/akenhq/aken/internal/redact"
+	"github.com/akenhq/aken/internal/screen"
 	"github.com/akenhq/aken/internal/source"
 	"github.com/akenhq/aken/protocol"
 	"github.com/akenhq/aken/rules"
@@ -56,12 +57,12 @@ func validate(o Options) error {
 	_, err := protocol.NewRelayClient(o.RelayURL, [32]byte{})
 	return err
 }
-func loadRules(o Options) (*redact.Engine, redact.File, string, int, int, error) {
+func LoadRules(rulesFile string, keep, keepCategories []string) (*redact.Engine, redact.File, string, int, int, error) {
 	base, err := redact.ParseRules(rules.Default)
 	if err != nil {
 		return nil, redact.File{}, "", 0, 0, err
 	}
-	path := o.RulesFile
+	path := rulesFile
 	if path == "" {
 		if _, err := os.Stat("/etc/aken/rules.json"); err == nil {
 			path = "/etc/aken/rules.json"
@@ -85,10 +86,10 @@ func loadRules(o Options) (*redact.Engine, redact.File, string, int, int, error)
 			return nil, redact.File{}, "", 0, 0, err
 		}
 	}
-	engine, err := redact.Compile(merged, o.Keep, o.KeepCategories)
+	engine, err := redact.Compile(merged, keep, keepCategories)
 	defaults, extras := 0, 0
 	for _, r := range merged.Rules {
-		if r.Enabled != nil && !*r.Enabled || slices.Contains(o.KeepCategories, r.Category) {
+		if r.Enabled != nil && !*r.Enabled || slices.Contains(keepCategories, r.Category) {
 			continue
 		}
 		if slices.ContainsFunc(extra.Rules, func(x redact.Rule) bool { return x.Name == r.Name }) {
@@ -146,7 +147,7 @@ func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writ
 	if err := validate(o); err != nil {
 		return fail(err)
 	}
-	engine, merged, path, defaults, extras, err := loadRules(o)
+	engine, merged, path, defaults, extras, err := LoadRules(o.RulesFile, o.Keep, o.KeepCategories)
 	if err != nil {
 		return fail(err)
 	}
@@ -159,7 +160,7 @@ func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writ
 		o.StateDir = DefaultStateDir()
 	}
 	if !o.DryRun && o.Retention > 0 {
-		if err := prune(filepath.Join(o.StateDir, "runs"), created.Add(-o.Retention)); err != nil {
+		if err := Prune(filepath.Join(o.StateDir, "runs"), created.Add(-o.Retention)); err != nil {
 			return fail(err)
 		}
 	}
@@ -292,7 +293,7 @@ func upload(ctx context.Context, o Options, plaintext []byte, m protocol.Manifes
 	var uploaded int64
 	for i, chunk := range sealed {
 		uploaded += int64(len(chunks[i]))
-		_, _ = fmt.Fprintf(stdout, "Uploading chunk %d of %d (%s of %s)...\n", i+1, m.ChunkCount, sizeText(uploaded), sizeText(m.TotalBytes))
+		_, _ = fmt.Fprintf(stdout, "Uploading chunk %d of %d (%s of %s)...\n", i+1, m.ChunkCount, screen.SizeText(uploaded), screen.SizeText(m.TotalBytes))
 		if err := client.PutChunk(ctx, id, uint64(i), chunk); err != nil {
 			return uploadFail(err)
 		}
@@ -309,7 +310,7 @@ func upload(ctx context.Context, o Options, plaintext []byte, m protocol.Manifes
 	if err := client.PutManifest(ctx, id, encrypted); err != nil {
 		return uploadFail(err)
 	}
-	_, _ = fmt.Fprintf(stdout, "Uploaded %d %s (%s). The artifact expires at %s.\nLocal copy: %s\n\nSession token. Paste it into `aken-mcp join` on your machine, not into the agent chat:\n\n  %s\n", m.ChunkCount, plural(int64(m.ChunkCount), "chunk", "chunks"), sizeText(m.TotalBytes), session.ExpiresAt.UTC().Format(time.RFC3339), dir, token.Encode())
+	_, _ = fmt.Fprintf(stdout, "Uploaded %d %s (%s). The artifact expires at %s.\nLocal copy: %s\n\nSession token. Paste it into `aken-mcp join` on your machine, not into the agent chat:\n\n  %s\n", m.ChunkCount, screen.Plural(int64(m.ChunkCount), "chunk", "chunks"), screen.SizeText(m.TotalBytes), session.ExpiresAt.UTC().Format(time.RFC3339), dir, token.Encode())
 	if o.RelayURL != protocol.DefaultRelayURL {
 		_, _ = fmt.Fprintf(stdout, "\nWhen the relay is not the default, join with: aken-mcp join --relay %s\n", o.RelayURL)
 	}

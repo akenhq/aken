@@ -3,6 +3,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -110,10 +111,10 @@ func TestJoinStatusEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.JoinedVia != "cli" || stored.Token != token.Encode() || stored.Relay != relay.URL || !stored.ExpiresAt.Equal(info.ExpiresAt) {
+	if stored.Version != 2 || stored.Mode != "blob" || stored.JoinedVia != "cli" || stored.Token != token.Encode() || stored.Relay != relay.URL || !stored.ExpiresAt.Equal(info.ExpiresAt) {
 		t.Fatal("wrong stored session")
 	}
-	invoke([]string{"status"}, "", 0, "Session "+stored.SessionID+" on "+relay.URL)
+	invoke([]string{"status"}, "", 0, "Session "+stored.SessionID+" on "+relay.URL+", mode blob,")
 	stored.ExpiresAt = time.Now().Add(-time.Minute)
 	if err := session.Save(sessionPath, stored); err != nil {
 		t.Fatal(err)
@@ -129,4 +130,103 @@ func TestJoinStatusEnd(t *testing.T) {
 	}
 	invoke([]string{"end"}, "", 0, "Ended session ")
 	invoke([]string{"status"}, "", 1, "aken-mcp: no session\n")
+}
+
+func TestLiveJoinStatusEnd(t *testing.T) {
+	for _, badMAC := range []bool{false, true} {
+		t.Run(fmt.Sprint(badMAC), func(t *testing.T) {
+			original := sessionPath
+			sessionPath = filepath.Join(t.TempDir(), "session.json")
+			t.Cleanup(func() { sessionPath = original })
+			relay := httptest.NewServer(devrelay.New())
+			defer relay.Close()
+			token := protocol.NewToken()
+			client, err := protocol.NewRelayClient(relay.URL, token.RelayCredential())
+			if err != nil {
+				t.Fatal(err)
+			}
+			pair, err := protocol.GenerateKeyPair()
+			if err != nil {
+				t.Fatal(err)
+			}
+			mac := protocol.CollectorMAC(token.ExchangeKey(), token.SessionID(), pair.Public())
+			if badMAC {
+				mac[0] ^= 1
+			}
+			info, err := client.CreatePersistentSession(t.Context(), token.SessionID(), time.Hour, pair.Public(), mac)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stdout, stderr bytes.Buffer
+			code := run([]string{"join", "--relay", relay.URL}, strings.NewReader(token.Encode()+"\n"), &stdout, &stderr)
+			if badMAC {
+				if code != 1 || stderr.String() != "aken-mcp: join rejected: bad authentication\n" || stdout.Len() != 0 {
+					t.Fatalf("bad MAC: exit %d, %q, %q", code, stdout.String(), stderr.String())
+				}
+				if _, err := os.Stat(sessionPath); !os.IsNotExist(err) {
+					t.Fatal("bad MAC saved a session")
+				}
+				if _, joined, err := client.WaitJoin(t.Context(), token.SessionID(), 0); err != nil || joined {
+					t.Fatalf("bad MAC joined: %v", err)
+				}
+				return
+			}
+			want := fmt.Sprintf("Joined live session %s via cli. It expires at %s.\n", token.SessionID(), info.ExpiresAt.UTC().Format(time.RFC3339))
+			if code != 0 || stdout.String() != want || stderr.Len() != 0 {
+				t.Fatalf("join: exit %d, %q, %q", code, stdout.String(), stderr.String())
+			}
+			stored, err := session.Load(sessionPath)
+			if err != nil || !stored.Live() || stored.Version != 2 || stored.NextJobSeq != 1 || stored.NextResultSeq != 1 {
+				t.Fatalf("saved live session: %v", err)
+			}
+			joined, ok, err := client.WaitJoin(t.Context(), token.SessionID(), 0)
+			if err != nil || !ok || joined.Via != "cli" {
+				t.Fatalf("join: %v", err)
+			}
+			mcpKey, keyOK := protocol.DecodeKey(joined.MCPKey)
+			mcpMAC, macOK := protocol.DecodeKey(joined.MCPMAC)
+			if !keyOK || !macOK || !protocol.VerifyMCPMAC(token.ExchangeKey(), token.SessionID(), pair.Public(), mcpKey, mcpMAC) {
+				t.Fatal("incorrect MCP authentication")
+			}
+			root, err := protocol.ContentRoot(pair, mcpKey, token.SessionID(), pair.Public(), mcpKey)
+			if err != nil || stored.ContentRoot != protocol.EncodeKey(root) {
+				t.Fatal("content roots differ")
+			}
+			if err := client.DeleteSession(t.Context(), token.SessionID()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.CreatePersistentSession(t.Context(), token.SessionID(), time.Hour, pair.Public(), mac); err != nil {
+				t.Fatal(err)
+			}
+			for _, expiry := range []time.Time{info.ExpiresAt, time.Now().UTC().Add(-time.Hour)} {
+				stored.ExpiresAt = expiry
+				if err := session.Save(sessionPath, stored); err != nil {
+					t.Fatal(err)
+				}
+				stdout.Reset()
+				stderr.Reset()
+				code := run([]string{"join", token.Encode(), "--relay", relay.URL}, strings.NewReader(""), &stdout, &stderr)
+				if code != 1 || stdout.Len() != 0 || stderr.String() != "aken-mcp: this token was already used to join a live session; run aken serve again and join its new token\n" {
+					t.Fatalf("re-join: exit %d, %q, %q", code, stdout.String(), stderr.String())
+				}
+				if got, err := session.Load(sessionPath); err != nil || got != stored {
+					t.Fatalf("re-join changed session: %v", err)
+				}
+			}
+			if _, joined, err := client.WaitJoin(t.Context(), token.SessionID(), 0); err != nil || joined {
+				t.Fatalf("re-join reached relay: %v", err)
+			}
+			stderr.Reset()
+			stdout.Reset()
+			if run([]string{"status"}, strings.NewReader(""), &stdout, &stderr) != 0 || !strings.Contains(stdout.String(), "mode session,") {
+				t.Fatalf("status: %q", stdout.String())
+			}
+			if run([]string{"end"}, strings.NewReader(""), &stdout, &stderr) != 0 {
+				t.Fatalf("end: %q", stderr.String())
+			}
+			if _, err := client.Session(t.Context(), token.SessionID()); !protocol.IsNotFound(err) {
+				t.Fatal("live session was not deleted")
+			}
+		})
+	}
 }

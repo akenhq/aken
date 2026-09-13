@@ -16,12 +16,14 @@ type MemoryStore struct {
 }
 
 type memorySession struct {
-	credHash   [32]byte
-	expiresAt  time.Time
-	chunkCount uint32
-	chunks     [][]byte
-	stored     uint32
-	manifest   []byte
+	mode                       string
+	collectorKey, collectorMAC [32]byte
+	credHash                   [32]byte
+	expiresAt                  time.Time
+	chunkCount                 uint32
+	chunks                     [][]byte
+	stored                     uint32
+	manifest                   []byte
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -34,7 +36,7 @@ func (m *MemoryStore) CreateSession(_ context.Context, id protocol.SessionID, me
 	if m.sessions[id] != nil {
 		return ErrExists
 	}
-	m.sessions[id] = &memorySession{credHash: meta.CredentialHash, expiresAt: meta.ExpiresAt, chunkCount: meta.ChunkCount, chunks: make([][]byte, meta.ChunkCount)}
+	m.sessions[id] = &memorySession{mode: meta.Mode, collectorKey: meta.CollectorKey, collectorMAC: meta.CollectorMAC, credHash: meta.CredentialHash, expiresAt: meta.ExpiresAt, chunkCount: meta.ChunkCount, chunks: make([][]byte, meta.ChunkCount)}
 	return nil
 }
 
@@ -45,7 +47,7 @@ func (m *MemoryStore) Session(_ context.Context, id protocol.SessionID) (Session
 	if sess == nil {
 		return SessionMeta{}, ErrNotFound
 	}
-	return SessionMeta{CredentialHash: sess.credHash, ExpiresAt: sess.expiresAt, ChunkCount: sess.chunkCount, ChunksStored: sess.stored, ManifestStored: sess.manifest != nil}, nil
+	return SessionMeta{Mode: sess.mode, CollectorKey: sess.collectorKey, CollectorMAC: sess.collectorMAC, CredentialHash: sess.credHash, ExpiresAt: sess.expiresAt, ChunkCount: sess.chunkCount, ChunksStored: sess.stored, ManifestStored: sess.manifest != nil}, nil
 }
 
 func (m *MemoryStore) PutChunk(_ context.Context, id protocol.SessionID, index uint64, ciphertext []byte) error {

@@ -11,7 +11,7 @@ import (
 type Server struct {
 	Now   func() time.Time
 	store *relay.MemoryStore
-	mux   http.Handler
+	mux   *relay.Handler
 }
 
 func New() *Server {
@@ -25,6 +25,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) Sweep() {
+	s.mux.Sweep()
 	s.store.Sweep(s.now())
 }
 

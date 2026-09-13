@@ -66,3 +66,34 @@ func TestServerRoundTrip(t *testing.T) {
 	}
 	request(t, s, "GET", path, nil, "1", auth, 404, "not_found")
 }
+
+func TestServerPersistentJoin(t *testing.T) {
+	s := New()
+	now := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
+	s.Now = func() time.Time { return now }
+	token := protocol.NewToken()
+	path, auth := "/v0/sessions/"+token.SessionID().String(), protocol.AuthorizationHeader(token.RelayCredential())
+	create, err := json.Marshal(protocol.CreateSessionRequest{Mode: "session", CollectorKey: protocol.EncodeKey([32]byte{1}), CollectorMAC: protocol.EncodeKey([32]byte{2})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request(t, s, "PUT", path, create, "1", auth, 201, "")
+	join, err := json.Marshal(protocol.JoinRequest{MCPKey: protocol.EncodeKey([32]byte{3}), MCPMAC: protocol.EncodeKey([32]byte{4}), Via: "cli"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request(t, s, "POST", path+"/join", join, "1", auth, 201, "")
+	w := request(t, s, "GET", path+"/join?wait=0", nil, "1", auth, 200, "")
+	var info protocol.JoinInfo
+	if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil || info.MCPKey != protocol.EncodeKey([32]byte{3}) || info.CollectorMAC != protocol.EncodeKey([32]byte{2}) || !info.JoinedAt.Equal(now) {
+		t.Fatal("join", info, err)
+	}
+	now = now.Add(protocol.DefaultSessionTTL)
+	s.Sweep()
+	request(t, s, "GET", path+"/join", nil, "1", auth, 404, "not_found")
+	if _, err := s.store.Session(t.Context(), token.SessionID()); err != relay.ErrNotFound {
+		t.Fatal("swept metadata", err)
+	}
+	request(t, s, "PUT", path, create, "1", auth, 201, "")
+	request(t, s, "GET", path+"/join", nil, "1", auth, 204, "")
+}

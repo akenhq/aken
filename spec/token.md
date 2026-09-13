@@ -47,9 +47,11 @@ Use HKDF-SHA256. The input secret is the 32 token bytes. The salt is the bytes o
 |---|---|---|---|
 | `SessionID` | `session-id` | 16 bytes | Public identifier of the session at the relay |
 | `RelayCredential` | `relay-credential` | 32 bytes | Bearer credential both ends present to the relay; the relay stores only its SHA-256 |
-| `ContentRoot` | `content-root` | 32 bytes | Root of all content keys; never leaves the collector or the MCP |
+| `ContentRoot` | `content-root` | 32 bytes | Root of blob content keys; never leaves the collector or the MCP |
+| `ExchangeKey` | `exchange-key` | 32 bytes | HMAC key authenticating the persistent-session exchange; never leaves the collector or the MCP |
 
-The distinct `info` labels make the three outputs independent. The Go
+The exchange key authenticates the X25519 exchange in [envelope.md](envelope.md).
+The distinct `info` labels make the four outputs independent. The Go
 implementation uses `crypto/hkdf.Key` with `crypto/sha256.New`.
 
 ## Where values may go

@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/akenhq/aken/internal/session"
 	"github.com/akenhq/aken/protocol"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -231,5 +233,69 @@ func TestJoinRelay(t *testing.T) {
 		if _, _, err := s.join(t.Context(), nil, joinArgs{Token: token.Encode()}); !errors.Is(err, stop) {
 			t.Fatalf("join error = %v", err)
 		}
+	}
+}
+
+func TestJoinUsedLiveToken(t *testing.T) {
+	s, client, _, id := liveFixture(t)
+	stored, err := session.Load(s.SessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.DeleteSession(t.Context(), id); err != nil {
+		t.Fatal(err)
+	}
+	s.NewClient = func(string, [32]byte) (*protocol.RelayClient, error) {
+		t.Fatal("re-join reached relay client")
+		return nil, nil
+	}
+	cs := connect(t, s)
+	for _, expiry := range []time.Time{stored.ExpiresAt, time.Now().UTC().Add(-time.Hour)} {
+		stored.ExpiresAt = expiry
+		if err := session.Save(s.SessionPath, stored); err != nil {
+			t.Fatal(err)
+		}
+		got, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "join", Arguments: map[string]any{"token": stored.Token}})
+		if err != nil || !got.IsError || got.Content[0].(*mcp.TextContent).Text != "this token was already used to join a live session; run aken serve again and join its new token" {
+			t.Fatalf("re-join: %+v, %v", got, err)
+		}
+		if current, err := session.Load(s.SessionPath); err != nil || current != stored {
+			t.Fatalf("re-join changed session: %v", err)
+		}
+	}
+}
+
+func TestToolModes(t *testing.T) {
+	live, _, _, _ := liveFixture(t)
+	blob, _ := fixture(t, "line\n")
+	for _, tt := range []struct {
+		s     *Server
+		want  string
+		calls map[string]map[string]any
+	}{
+		{live, "this is a live session: use read_file, search_files, tail_file, journal, docker_logs, systemctl_status, ps, df or plan", map[string]map[string]any{
+			"sources": {}, "summary": {}, "search": {"regex": "x"}, "tail": {"source": "a"}, "read": {"source": "a", "from": 1, "to": 1}, "context": {"source": "a", "line": 1},
+		}},
+		{blob, "this session is one-shot: use sources, summary, search, tail, read or context", map[string]map[string]any{
+			"list_dir": {"path": "/var/log"}, "read_file": {"path": "/var/log/a"}, "search_files": {"glob": "/var/log/*", "regex": "x"}, "tail_file": {"path": "/var/log/a"}, "journal": {"unit": "app"}, "docker_logs": {"container": "app"}, "systemctl_status": {"unit": "app"}, "ps": {}, "df": {}, "plan": {"jobs": []any{map[string]any{"name": "ps", "params": map[string]any{}}}}, "result": {"id": "j1"},
+		}},
+	} {
+		cs := connect(t, tt.s)
+		for name, args := range tt.calls {
+			got, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: name, Arguments: args})
+			if err != nil || !got.IsError || got.Content[0].(*mcp.TextContent).Text != tt.want {
+				t.Fatalf("%s mode error: %+v, %v", name, got, err)
+			}
+		}
+	}
+	live.Now = func() time.Time { return time.Now().Add(2 * time.Hour) }
+	got, err := connect(t, live).CallTool(t.Context(), &mcp.CallToolParams{Name: "ps", Arguments: map[string]any{}})
+	if err != nil || !got.IsError || !strings.Contains(got.Content[0].(*mcp.TextContent).Text, "the session expired at") {
+		t.Fatalf("live expiry: %+v, %v", got, err)
+	}
+	missing := &Server{SessionPath: filepath.Join(t.TempDir(), "session.json")}
+	got, err = connect(t, missing).CallTool(t.Context(), &mcp.CallToolParams{Name: "ps", Arguments: map[string]any{}})
+	if err != nil || !got.IsError || !strings.Contains(got.Content[0].(*mcp.TextContent).Text, "no session") {
+		t.Fatalf("live no session: %+v, %v", got, err)
 	}
 }

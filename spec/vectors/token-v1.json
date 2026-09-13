@@ -5,12 +5,14 @@
   "labels": {
     "content_root": "content-root",
     "relay_credential": "relay-credential",
-    "session_id": "session-id"
+    "session_id": "session-id",
+    "exchange_key": "exchange-key"
   },
   "lengths": {
     "content_root": 32,
     "relay_credential": 32,
-    "session_id": 16
+    "session_id": 16,
+    "exchange_key": 32
   },
   "valid": [
     {
@@ -19,7 +21,8 @@
       "relay_credential_hex": "f155b5bb37832427b80be371c342cd13881f5c3e4c84a3824fbf52c1b6e57fe7",
       "secret_hex": "0000000000000000000000000000000000000000000000000000000000000000",
       "session_id": "94d74629849d564425fc1737a1388e6d",
-      "token": "akn1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      "token": "akn1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "exchange_key_hex": "ed839f559f8ec2cf2e25dfd5119ca28b9a8399ae9017397e862398656267edce"
     },
     {
       "content_root_hex": "51616e30047d79c269cb0536afad8fba9748562e21c95dcbdea61c256b2c98c6",
@@ -27,7 +30,8 @@
       "relay_credential_hex": "3e5e48b811e0ea93b8fb9ea620362ca6be6bba702f31a491e4b2df99e66c9bfd",
       "secret_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
       "session_id": "320a68b75c6d43a92a570aeecc57053e",
-      "token": "akn1_777777777777777777777777777777777777777777777777777q"
+      "token": "akn1_777777777777777777777777777777777777777777777777777q",
+      "exchange_key_hex": "2a592c78b75f72a969466f058e149c2e10cbf4ba2247165adbc9fdcf06ef4400"
     },
     {
       "content_root_hex": "630cdfa88398ff70b57a076dc8be321278d8b71867ee2d5f64ccf3968e53d093",
@@ -35,7 +39,8 @@
       "relay_credential_hex": "62c61fecf784d7ec02a47e2167ac7498ae4838f8ad188fbf7c5bd7b02ef9edcc",
       "secret_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
       "session_id": "6c6c71b5d8394e337347f05e26a28513",
-      "token": "akn1_aaaqeayeaudaocajbifqydiob4ibceqtcqkrmfyydenbwha5dypq"
+      "token": "akn1_aaaqeayeaudaocajbifqydiob4ibceqtcqkrmfyydenbwha5dypq",
+      "exchange_key_hex": "cbdffd76924ce294fedf704b79efd41d643995512e412e24e5d68f6c61c36179"
     },
     {
       "content_root_hex": "f33e18ee114de1b1f14dbef2f92179194b5faf37cc6aa63320dbe6af124f6061",
@@ -43,7 +48,8 @@
       "relay_credential_hex": "fc9ac4991ffe496351c98acf230e87b83a277721a764c1b44db9bceb685caec0",
       "secret_hex": "c935225b000ec817fe2f6341c071b9f2e560b7663ddcdb506c64af222ab3dfa0",
       "session_id": "45df2145e4ffeb9195547a2f26f466b2",
-      "token": "akn1_ze2sewyab3ebp7rpmna4a4nz6lswbn3ghxonwudmmsxsekvt36qa"
+      "token": "akn1_ze2sewyab3ebp7rpmna4a4nz6lswbn3ghxonwudmmsxsekvt36qa",
+      "exchange_key_hex": "8e52544b884b6688b4f2d4f4906acc4a0a2375f7224b3c6ba8445d6b6ef92146"
     }
   ],
   "invalid": [

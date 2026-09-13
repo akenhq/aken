@@ -11,7 +11,7 @@ export CGO_ENABLED := 0
 BUILDFLAGS := -trimpath -buildvcs=false
 LDFLAGS    := -s -w -buildid= -X $(MODULE)/internal/buildinfo.version=$(VERSION)
 
-.PHONY: build test vet lint depcheck release sums repro check clean
+.PHONY: build test vet lint depcheck release sums render test-install repro check clean
 
 build:
 	@mkdir -p bin
@@ -49,7 +49,18 @@ release:
 	done
 
 sums:
-	cd $(DIST) && sha256sum aken_* aken-mcp_* aken-devrelay_* > SHA256SUMS
+	cd "$(DIST)"; assets=(aken_* aken-mcp_* aken-devrelay_*); \
+	  for script in install.sh run.sh; do \
+	    if [[ -f "$$script" ]]; then assets+=("$$script"); fi; \
+	  done; \
+	  sha256sum "$${assets[@]}" > SHA256SUMS
+
+render:
+	bash packaging/render.sh "$(DIST)" "$(VERSION)" install > "$(DIST)/install.sh"
+	bash packaging/render.sh "$(DIST)" "$(VERSION)" once > "$(DIST)/run.sh"
+
+test-install:
+	bash packaging/install_test.sh
 
 # Build every release target twice in separate directories and require identical hashes.
 repro:
@@ -59,7 +70,7 @@ repro:
 	@diff <(cd $(DIST)-repro-a && sha256sum *) <(cd $(DIST)-repro-b && sha256sum *) && echo "repro: identical"
 	@rm -rf $(DIST)-repro-a $(DIST)-repro-b
 
-check: lint vet test depcheck repro
+check: lint vet test depcheck repro test-install
 
 clean:
 	rm -rf bin $(DIST) $(DIST)-repro-a $(DIST)-repro-b

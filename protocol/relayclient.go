@@ -213,3 +213,80 @@ func (c *RelayClient) DeleteSession(ctx context.Context, id SessionID) error {
 	_, err := c.request(ctx, http.MethodDelete, sessionPath(id), "", nil, 2<<20)
 	return err
 }
+
+func (c *RelayClient) CreatePersistentSession(ctx context.Context, id SessionID, ttl time.Duration, collectorKey, collectorMAC [32]byte) (SessionInfo, error) {
+	var info SessionInfo
+	body, err := json.Marshal(CreateSessionRequest{TTLSeconds: int64(ttl / time.Second), Mode: "session", CollectorKey: EncodeKey(collectorKey), CollectorMAC: EncodeKey(collectorMAC)})
+	if err != nil {
+		return info, err
+	}
+	body, err = c.request(ctx, http.MethodPut, sessionPath(id), "application/json", body, 2<<20)
+	if err == nil {
+		err = decodeRelayJSON(body, &info)
+	}
+	return info, err
+}
+
+func (c *RelayClient) Join(ctx context.Context, id SessionID, mcpKey, mcpMAC [32]byte, via string) (JoinInfo, error) {
+	var info JoinInfo
+	body, err := json.Marshal(JoinRequest{MCPKey: EncodeKey(mcpKey), MCPMAC: EncodeKey(mcpMAC), Via: via})
+	if err != nil {
+		return info, err
+	}
+	body, err = c.request(ctx, http.MethodPost, sessionPath(id)+"/join", "application/json", body, 2<<20)
+	if err == nil {
+		err = decodeRelayJSON(body, &info)
+	}
+	return info, err
+}
+
+func waitQuery(wait time.Duration) string {
+	return "?wait=" + strconv.FormatInt(int64(max(0, min(wait/time.Second, 30))), 10)
+}
+
+func (c *RelayClient) WaitJoin(ctx context.Context, id SessionID, wait time.Duration) (JoinInfo, bool, error) {
+	var info JoinInfo
+	body, err := c.request(ctx, http.MethodGet, sessionPath(id)+"/join"+waitQuery(wait), "", nil, 2<<20)
+	if err != nil || len(body) == 0 {
+		return info, false, err
+	}
+	err = decodeRelayJSON(body, &info)
+	return info, err == nil, err
+}
+
+func (c *RelayClient) postEnvelope(ctx context.Context, id SessionID, suffix string, e Envelope) error {
+	body, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+	_, err = c.request(ctx, http.MethodPost, sessionPath(id)+suffix, "application/json", body, 2<<20)
+	return err
+}
+
+func (c *RelayClient) PostJob(ctx context.Context, id SessionID, e Envelope) error {
+	return c.postEnvelope(ctx, id, "/jobs", e)
+}
+func (c *RelayClient) PostResult(ctx context.Context, id SessionID, e Envelope) error {
+	return c.postEnvelope(ctx, id, "/results", e)
+}
+
+func (c *RelayClient) pollMessages(ctx context.Context, id SessionID, suffix string, wait time.Duration, capBytes int) ([]Envelope, error) {
+	// A poll can return 64 base64-encoded ciphertexts, plus their JSON envelopes.
+	limit := int64(64 * (4*((capBytes+2)/3) + 1024))
+	body, err := c.request(ctx, http.MethodGet, sessionPath(id)+suffix+waitQuery(wait), "", nil, limit)
+	if err != nil || len(body) == 0 {
+		return nil, err
+	}
+	var messages Messages
+	if err := decodeRelayJSON(body, &messages); err != nil {
+		return nil, err
+	}
+	return messages.Messages, nil
+}
+
+func (c *RelayClient) PollJobs(ctx context.Context, id SessionID, wait time.Duration) ([]Envelope, error) {
+	return c.pollMessages(ctx, id, "/jobs", wait, MaxJobBytes)
+}
+func (c *RelayClient) PollResults(ctx context.Context, id SessionID, wait time.Duration) ([]Envelope, error) {
+	return c.pollMessages(ctx, id, "/results", wait, MaxResultBytes)
+}

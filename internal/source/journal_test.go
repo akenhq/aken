@@ -158,3 +158,17 @@ func TestJournalMatch(t *testing.T) {
 		}
 	}
 }
+
+func TestBinaryPath(t *testing.T) {
+	for _, name := range []string{"journalctl", "ps", "df", "systemctl"} {
+		path, err := BinaryPath(name)
+		if err != nil || path != "/usr/bin/"+name && path != "/bin/"+name {
+			t.Fatalf("BinaryPath(%q)=%q,%v", name, path, err)
+		}
+	}
+	for _, name := range []string{"", "../bin/sh", "/bin/sh", "a/b", ".", "..", "aken-binary-that-does-not-exist"} {
+		if _, err := BinaryPath(name); err == nil {
+			t.Fatalf("accepted %q", name)
+		}
+	}
+}

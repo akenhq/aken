@@ -39,7 +39,7 @@ func fixture(t *testing.T, parts ...string) (*Server, session.Session) {
 	t.Helper()
 	token := protocol.NewToken()
 	now := time.Now().UTC().Truncate(time.Second)
-	stored := session.Session{Version: 1, Token: token.Encode(), Relay: protocol.DefaultRelayURL, SessionID: token.SessionID().String(), ExpiresAt: now.Add(time.Hour), JoinedAt: now, JoinedVia: "cli"}
+	stored := session.Session{Version: 2, Mode: "blob", Token: token.Encode(), Relay: protocol.DefaultRelayURL, SessionID: token.SessionID().String(), ExpiresAt: now.Add(time.Hour), JoinedAt: now, JoinedVia: "cli"}
 	s := &Server{SessionPath: filepath.Join(t.TempDir(), "session.json"), Version: "test", Now: func() time.Time { return now }}
 	if err := session.Save(s.SessionPath, stored); err != nil {
 		t.Fatal(err)
@@ -96,7 +96,7 @@ func TestServer(t *testing.T) {
 				t.Fatalf("schema = %s, %v", schema, err)
 			}
 		}
-		want := []string{"context", "read", "search", "sources", "summary", "tail"}
+		want := []string{"context", "read", "search", "sources", "summary", "tail", "list_dir", "read_file", "search_files", "tail_file", "journal", "docker_logs", "systemctl_status", "ps", "df", "plan", "result"}
 		if allow {
 			want = append(want, "join")
 		}

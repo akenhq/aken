@@ -13,6 +13,11 @@
 The token appears once, on the terminal. The collector does not store it
 anywhere. Keep it out of agent chats, shell history, and tickets.
 
+For a live session, use [`aken serve`](serve.md). The agent can request typed
+read jobs while the collector stays open. You approve jobs or plans in the
+server terminal at level 1; level 0 preapproves catalog jobs within the path
+scope. Results are redacted and kept in a local audit copy.
+
 ## Permissions
 
 Run the collector as the unprivileged `aken` user. It refuses root. Follow
@@ -210,6 +215,9 @@ Narrow `--since` for journal sources or use `--tail N` for large files.
 The relay enforces its caps too.
 
 ## Local copies
+
+One-shot copies go under `runs/`. Live session copies go under `sessions/`
+in the same state directory; see [Live sessions](serve.md#local-copy).
 
 The collector creates the following directory before upload starts, with
 mode `0700`:

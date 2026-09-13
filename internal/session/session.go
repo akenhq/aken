@@ -2,6 +2,7 @@
 package session
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -12,13 +13,17 @@ import (
 )
 
 type Session struct {
-	Version   int       `json:"version"`
-	Token     string    `json:"token"`
-	Relay     string    `json:"relay"`
-	SessionID string    `json:"session_id"`
-	ExpiresAt time.Time `json:"expires_at"`
-	JoinedAt  time.Time `json:"joined_at"`
-	JoinedVia string    `json:"joined_via"`
+	Version       int       `json:"version"`
+	Mode          string    `json:"mode"`
+	ContentRoot   string    `json:"content_root,omitempty"`
+	NextJobSeq    uint64    `json:"next_job_seq,omitempty"`
+	NextResultSeq uint64    `json:"next_result_seq,omitempty"`
+	Token         string    `json:"token"`
+	Relay         string    `json:"relay"`
+	SessionID     string    `json:"session_id"`
+	ExpiresAt     time.Time `json:"expires_at"`
+	JoinedAt      time.Time `json:"joined_at"`
+	JoinedVia     string    `json:"joined_via"`
 }
 
 var ErrNoSession = errors.New("session: no session; run: aken-mcp join <token>")
@@ -40,8 +45,22 @@ func Load(path string) (Session, error) {
 		return Session{}, err
 	}
 	var s Session
-	if json.Unmarshal(data, &s) != nil || s.Version != 1 || s.Relay == "" || s.ExpiresAt.IsZero() || s.JoinedAt.IsZero() || (s.JoinedVia != "cli" && s.JoinedVia != "chat") {
+	if json.Unmarshal(data, &s) != nil || (s.Version != 1 && s.Version != 2) || s.Relay == "" || s.ExpiresAt.IsZero() || s.JoinedAt.IsZero() || (s.JoinedVia != "cli" && s.JoinedVia != "chat") {
 		return Session{}, errors.New("session: malformed session file")
+	}
+	if s.Version == 1 || s.Mode == "" {
+		s.Mode = "blob"
+	}
+	if s.Mode != "blob" && s.Mode != "session" {
+		return Session{}, errors.New("session: malformed session mode")
+	}
+	if s.Live() {
+		if _, err := s.ParsedContentRoot(); err != nil {
+			return Session{}, err
+		}
+		if s.NextJobSeq < 1 || s.NextResultSeq < 1 || s.NextJobSeq > protocol.MaxSessionSeq+1 || s.NextResultSeq > protocol.MaxSessionSeq+1 {
+			return Session{}, errors.New("session: malformed sequence counters")
+		}
 	}
 	token, err := s.ParsedToken()
 	if err != nil {
@@ -55,6 +74,13 @@ func Load(path string) (Session, error) {
 }
 
 func Save(path string, s Session) error {
+	s.Version = 2
+	if s.Mode == "" {
+		s.Mode = "blob"
+	}
+	if !s.Live() {
+		s.ContentRoot, s.NextJobSeq, s.NextResultSeq = "", 0, 0
+	}
 	data, err := json.Marshal(s)
 	if err != nil {
 		return err
@@ -98,3 +124,64 @@ func Remove(path string) error {
 }
 func (s Session) ParsedToken() (protocol.Token, error) { return protocol.ParseToken(s.Token) }
 func (s Session) Expired(now time.Time) bool           { return !now.Before(s.ExpiresAt) }
+
+func (s Session) Live() bool { return s.Mode == "session" }
+
+func CheckJoin(path string, token protocol.Token) error {
+	stored, err := Load(path)
+	if errors.Is(err, ErrNoSession) {
+		return nil
+	}
+	if err == nil && stored.Live() && stored.SessionID == token.SessionID().String() {
+		return errors.New("this token was already used to join a live session; run aken serve again and join its new token")
+	}
+	return nil
+}
+
+func (s Session) ParsedContentRoot() ([32]byte, error) {
+	root, ok := protocol.DecodeKey(s.ContentRoot)
+	if !ok {
+		return [32]byte{}, errors.New("session: malformed content root")
+	}
+	return root, nil
+}
+
+func Join(ctx context.Context, client *protocol.RelayClient, token protocol.Token, info protocol.SessionInfo, via string, now time.Time) (Session, error) {
+	stored := Session{Version: 2, Mode: "blob", Token: token.Encode(), Relay: client.BaseURL, SessionID: token.SessionID().String(), ExpiresAt: info.ExpiresAt, JoinedAt: now.UTC(), JoinedVia: via}
+	if info.Mode == "" || info.Mode == "blob" {
+		return stored, nil
+	}
+	if info.Mode != "session" {
+		return Session{}, errors.New("session: unknown relay session mode")
+	}
+	collectorKey, keyOK := protocol.DecodeKey(info.CollectorKey)
+	collectorMAC, macOK := protocol.DecodeKey(info.CollectorMAC)
+	if !keyOK || !macOK || !protocol.VerifyCollectorMAC(token.ExchangeKey(), token.SessionID(), collectorKey, collectorMAC) {
+		return Session{}, errors.New("join rejected: bad authentication")
+	}
+	pair, err := protocol.GenerateKeyPair()
+	if err != nil {
+		return Session{}, err
+	}
+	mac := protocol.MCPMAC(token.ExchangeKey(), token.SessionID(), collectorKey, pair.Public())
+	joined, err := client.Join(ctx, token.SessionID(), pair.Public(), mac, via)
+	if protocol.IsNotFound(err) {
+		return Session{}, errors.New("this relay does not support persistent sessions")
+	}
+	if err != nil {
+		return Session{}, err
+	}
+	joinedKey, keyOK := protocol.DecodeKey(joined.CollectorKey)
+	joinedMAC, macOK := protocol.DecodeKey(joined.CollectorMAC)
+	if !keyOK || !macOK || joinedKey != collectorKey || !protocol.VerifyCollectorMAC(token.ExchangeKey(), token.SessionID(), joinedKey, joinedMAC) {
+		return Session{}, errors.New("join rejected: bad authentication")
+	}
+	root, err := protocol.ContentRoot(pair, collectorKey, token.SessionID(), collectorKey, pair.Public())
+	if err != nil {
+		return Session{}, err
+	}
+	stored.Mode, stored.ContentRoot = "session", protocol.EncodeKey(root)
+	stored.NextJobSeq, stored.NextResultSeq = 1, 1
+	stored.JoinedAt = joined.JoinedAt.UTC()
+	return stored, nil
+}
