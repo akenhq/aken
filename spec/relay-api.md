@@ -174,3 +174,10 @@ These paths are reserved without definitions in v0:
 Run `go test ./spec/conformance/ -count=1` for the in-process dev relay. Set
 `AKEN_RELAY_URL` to run the same suite against another relay. Each test uses a
 fresh token and deletes its session afterward.
+
+## Reference implementation
+
+The [`relay` package](../relay/) holds the request handling used by the dev relay
+and hosted relays. A hosted relay supplies a `Store` and its own limits through
+`Options.Caps`. Run the conformance suite against the relay to check that its
+store behaves as this specification requires.

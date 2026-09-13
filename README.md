@@ -21,6 +21,7 @@ the code have not been professionally reviewed.
 | `cmd/aken-mcp` | Local MCP |
 | `cmd/aken-devrelay` | In-memory relay for development |
 | `protocol/` | Tokens, artifacts, and relay client |
+| `relay/` | Relay API v0 request handling shared by the dev relay and hosted relays |
 | `internal/` | Collector, redaction, MCP, and dev relay packages |
 | `rules/` | Default redaction rules |
 | `spec/` | Specifications, vectors, and the conformance suite |
