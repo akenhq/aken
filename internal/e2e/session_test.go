@@ -506,8 +506,9 @@ func (h *liveSession) end(t *testing.T, summary, diagnostics string) {
 	case <-h.ctx.Done():
 		t.Fatal("DeleteSession did not stop the collector")
 	}
-	h.out.until(t, "")
-	h.errs.until(t, "")
+	// The reader goroutines append lines after Run returns; wait for the last line of each stream.
+	h.out.until(t, "Session ended: "+summary+". Local copy: "+h.auditPath+"\n")
+	h.errs.until(t, "aken: the session was ended on the relay\n")
 	if h.code != 1 || h.errs.text.String() != diagnostics+"aken: the session was ended on the relay\n" {
 		t.Fatalf("collector exit=%d, stderr=%q", h.code, h.errs.text.String())
 	}

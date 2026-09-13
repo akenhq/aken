@@ -119,10 +119,12 @@ func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writ
 	cancel(nil)
 	code := 0
 	if ctx.Err() == nil && err != nil {
+		// The relay's clock and the local lifetime timer race at expiry; either signal means the session expired.
 		var relayErr *protocol.RelayError
-		if errors.Is(lifetime.Err(), context.DeadlineExceeded) {
+		relayEnded := (errors.As(context.Cause(active), &relayErr) || errors.As(err, &relayErr)) && (relayErr.Status == 404 || relayErr.Status == 409)
+		if errors.Is(lifetime.Err(), context.DeadlineExceeded) || (relayEnded && !o.Now().Before(remote.ExpiresAt)) {
 			err = fmt.Errorf("the session expired at %s", remote.ExpiresAt.UTC().Format(time.RFC3339))
-		} else if errors.As(context.Cause(active), &relayErr) && (relayErr.Status == 404 || relayErr.Status == 409) {
+		} else if relayEnded {
 			err = errors.New("the session was ended on the relay")
 		}
 		code = fail(err)
@@ -171,9 +173,7 @@ func (s *session) join(ctx context.Context, pair protocol.KeyPair, exchange [32]
 	for {
 		join, joined, err := s.client.WaitJoin(ctx, s.id, min(30*time.Second, s.audit.session.ExpiresAt.Sub(s.o.Now())))
 		if err != nil {
-			if protocol.IsNotFound(err) {
-				return errors.New("this relay does not support persistent sessions")
-			}
+			// A 404 here means the session is gone; an unsupported relay was refused before the session was created.
 			return err
 		}
 		if !joined {
