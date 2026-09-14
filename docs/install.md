@@ -1,6 +1,15 @@
 # Install and verify
 
-## Install with one command
+Install both parts of Aken:
+
+- [Install the collector on your server](#install-the-collector-on-your-server).
+- [Install the MCP on your machine](#install-the-mcp-on-your-machine), then connect your coding agent.
+
+Both installers download a release binary and check its SHA-256 hash against
+an embedded hash. To verify a script's signature before running it, see
+[Verify the script](#verify-the-script).
+
+## Install the collector on your server
 
 Run this on your Linux server:
 
@@ -14,9 +23,46 @@ The canonical GitHub URL is:
 curl -fsSL https://github.com/akenhq/aken/releases/latest/download/install.sh | sudo bash
 ```
 
-You install `aken` on the server and `aken-mcp` on your own machine. Both
-binaries come from the same signed release. Install the MCP using the
-[steps below](#install-the-mcp-on-your-machine).
+## Install the MCP on your machine
+
+Run this as your normal user on Linux (amd64 or arm64) or macOS (Apple Silicon):
+
+```sh
+curl -fsSL https://aken.dev/install-mcp.sh | bash
+```
+
+The canonical GitHub URL is:
+
+```sh
+curl -fsSL https://github.com/akenhq/aken/releases/latest/download/install-mcp.sh | bash
+```
+
+The script selects the binary for your platform, checks its embedded SHA-256
+hash, and installs `aken-mcp` into `~/.local/bin`. It requires Bash, `curl`,
+`mktemp`, `install`, and either `sha256sum` or `shasum`. No sudo is needed.
+
+If the script prints a PATH instruction, add that line to your shell profile
+and run it in your current terminal. It detects agent commands on PATH and
+prints registration commands for Claude Code and Codex CLI when found,
+using the full binary path. If it finds `cursor` or `cursor-agent`, it links
+to Cursor setup. It does not register the MCP automatically.
+
+Follow the printed instructions for your agent, or see
+[Connect your agent](mcp.md#install) if it was not detected.
+Then [join a session](mcp.md#join-a-session) using the token from your server.
+
+To select a release or installation directory, replace `<tag>` with a release tag:
+
+```sh
+curl -fsSL https://aken.dev/install-mcp.sh | bash -s -- --version <tag> --bin-dir "$HOME/.local/bin"
+```
+
+`--bin-dir` requires an absolute path. `--version` downloads that release's
+own `install-mcp.sh`, which carries its own hashes. Verify the selected
+release's script if you need to check its signature before execution.
+For manual installation, see [Install the MCP by hand](#install-the-mcp-by-hand).
+
+## Collector installer details
 
 The install script requires root. It selects the Linux amd64 or arm64 binary
 for your architecture, downloads it from its release, and checks its SHA-256
@@ -128,9 +174,12 @@ sudo bash install.sh
 ```
 
 For once mode, download `run.sh` and `run.sh.sigstore.json` from the same
-release and substitute those names in the verification command. Both rendered
-scripts are signed release assets and are listed in `SHA256SUMS`. The source
-copy at `packaging/install.sh` is unrendered and refuses to run.
+release and substitute those names in the verification command.
+For the local MCP, use `install-mcp.sh` and `install-mcp.sh.sigstore.json`,
+then run the verified copy with `bash install-mcp.sh` as your normal user.
+All three rendered scripts are signed release assets and are listed in
+`SHA256SUMS`. The source templates in `packaging/` are unrendered and refuse
+to run.
 
 ## Verify a release by hand
 
@@ -247,7 +296,7 @@ Optionally, create `/etc/aken/rules.json` as root for site-specific redaction
 rules and make it readable by `aken`. See [Redaction](redaction.md) for the
 format and how to check your rules before uploading.
 
-## Install the MCP on your machine
+## Install the MCP by hand
 
 Verify your MCP asset as above. Create `~/.local/bin` if needed, then install
 the macOS arm64 asset, or substitute the Linux asset for your architecture:
@@ -257,7 +306,13 @@ mkdir -p ~/.local/bin
 install -m 0755 aken-mcp_darwin_arm64 ~/.local/bin/aken-mcp
 ```
 
-Homebrew and npm come later.
+Add the binary directory to your PATH, including in your shell profile:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Then [connect your agent](mcp.md#install) and [join a session](mcp.md#join-a-session).
 
 ## Run
 

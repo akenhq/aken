@@ -56,9 +56,24 @@ On the server, install the collector:
 curl -fsSL https://aken.dev/install.sh | sudo bash
 ```
 
-See [Install and verify](docs/install.md) to verify the script and release,
-run once, or install `aken-mcp` on your machine. Open a live session on the
-server:
+On your own machine, install the local MCP (Linux or Apple Silicon macOS):
+
+```sh
+curl -fsSL https://aken.dev/install-mcp.sh | bash
+```
+
+Follow any PATH instruction printed by the installer. Register the MCP with
+Claude Code:
+
+```sh
+claude mcp add aken -- "$HOME/.local/bin/aken-mcp" serve
+```
+
+For Codex CLI or Cursor, see [Use the local MCP](docs/mcp.md#install).
+See [Install and verify](docs/install.md) for signature verification,
+version selection, and the collector's run-once option.
+
+Open a live session on the server:
 
 ```sh
 sudo -u aken aken serve
@@ -68,12 +83,6 @@ On your machine, run this and paste the printed token at the prompt:
 
 ```sh
 aken-mcp join
-```
-
-Register the MCP with Claude Code:
-
-```sh
-claude mcp add aken -- aken-mcp serve
 ```
 
 Then ask Claude Code:

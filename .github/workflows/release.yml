@@ -37,15 +37,16 @@ jobs:
           done
       - name: Checksum every release asset, binaries and SBOMs
         run: make sums VERSION="$VERSION"
-      - name: Render install and run-once scripts
+      - name: Render collector and MCP install scripts
         run: make render VERSION="$VERSION"
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: v3.1.3
-      - name: Sign install and run-once scripts (Sigstore keyless)
+      - name: Sign collector and MCP install scripts (Sigstore keyless)
         run: |
           cosign sign-blob --yes --bundle dist/install.sh.sigstore.json dist/install.sh
           cosign sign-blob --yes --bundle dist/run.sh.sigstore.json dist/run.sh
+          cosign sign-blob --yes --bundle dist/install-mcp.sh.sigstore.json dist/install-mcp.sh
       - name: Include scripts in release checksums
         run: make sums VERSION="$VERSION"
       - name: Sign the checksum file (Sigstore keyless)

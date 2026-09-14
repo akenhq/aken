@@ -2,9 +2,22 @@
 
 ## Install
 
-Install and verify `aken-mcp` on your own machine using
-[Install and verify](install.md#install-the-mcp-on-your-machine).
-Ensure the agent can find `aken-mcp` on its PATH.
+On your own Linux or Apple Silicon Mac machine, install `aken-mcp` as your
+normal user:
+
+```sh
+curl -fsSL https://aken.dev/install-mcp.sh | bash
+```
+
+The installer checks the binary's SHA-256 hash and installs it into
+`~/.local/bin`. Follow any PATH instruction it prints so your terminal and
+agent can find `aken-mcp`. It also prints setup instructions for supported
+agent commands found on PATH (Claude Code, Codex CLI, and Cursor).
+For signature verification, a specific release, or a custom directory, see [Install the MCP](install.md#install-the-mcp-on-your-machine).
+
+Connect your agent: [Claude Code](#claude-code), [Codex CLI](#codex-cli), or
+[Cursor](#cursor). You can use the full path to `aken-mcp` in the agent
+configuration if the agent does not inherit your shell's PATH.
 
 ## Join a session
 

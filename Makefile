@@ -50,7 +50,7 @@ release:
 
 sums:
 	cd "$(DIST)"; assets=(aken_* aken-mcp_* aken-devrelay_*); \
-	  for script in install.sh run.sh; do \
+	  for script in install.sh run.sh install-mcp.sh; do \
 	    if [[ -f "$$script" ]]; then assets+=("$$script"); fi; \
 	  done; \
 	  sha256sum "$${assets[@]}" > SHA256SUMS
@@ -58,9 +58,11 @@ sums:
 render:
 	bash packaging/render.sh "$(DIST)" "$(VERSION)" install > "$(DIST)/install.sh"
 	bash packaging/render.sh "$(DIST)" "$(VERSION)" once > "$(DIST)/run.sh"
+	bash packaging/render.sh "$(DIST)" "$(VERSION)" mcp > "$(DIST)/install-mcp.sh"
 
 test-install:
 	bash packaging/install_test.sh
+	bash packaging/install_mcp_test.sh
 
 # Build every release target twice in separate directories and require identical hashes.
 repro:
