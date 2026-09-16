@@ -2,14 +2,14 @@
 
 ## Project structure and module organization
 
-Aken is a Go collector, local MCP server, and development relay. Entry points live in `cmd/aken`, `cmd/aken-mcp`, and `cmd/aken-devrelay`. Implementation packages live in `internal/`; shared wire-protocol code and relay handlers live in `protocol/` and `relay/`. Redaction defaults are in `rules/default.json`. Specifications, fixtures, and conformance tests live in `spec/`; user documentation lives in `docs/`. Installer scripts and tests live in `packaging/`.
+Aken is a Go collector, local MCP server, and relay service. Entry points live in `cmd/aken`, `cmd/aken-mcp`, and `cmd/aken-relay`. Implementation packages live in `internal/`; shared wire-protocol code and relay handlers live in `protocol/` and `relay/`. Redaction defaults are in `rules/default.json`. Specifications, fixtures, and conformance tests live in `spec/`; user documentation lives in `docs/`. Installer scripts and tests live in `packaging/`.
 
 ## Build, test, and development commands
 
 Use Go 1.27.1 (`go.mod`) and golangci-lint v2.13.2. Run commands from the repository root:
 
 - `make build`: build all three binaries into `bin/`.
-- `./bin/aken-devrelay serve`: run the in-memory development relay at `127.0.0.1:7788`.
+- `./bin/aken-relay serve --store memory`: run the in-memory relay at `127.0.0.1:7788`.
 - `make test`: run all Go tests with `go test ./...`.
 - `make lint vet`: run golangci-lint and Go vet.
 - `make check`: run lint, vet, tests, dependency-budget checks, reproducible builds, and installer tests.

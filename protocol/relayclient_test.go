@@ -17,12 +17,12 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/akenhq/aken/internal/devrelay"
 	"github.com/akenhq/aken/protocol"
+	"github.com/akenhq/aken/relay"
 )
 
 func TestRelayClient(t *testing.T) {
-	server := httptest.NewServer(devrelay.New())
+	server := httptest.NewServer(relay.NewHandler(relay.NewMemoryStore(), relay.Options{}))
 	defer server.Close()
 	token := protocol.NewToken()
 	client, err := protocol.NewRelayClient(server.URL, token.RelayCredential())
@@ -267,7 +267,7 @@ func TestRelayErrorMessage(t *testing.T) {
 }
 
 func TestPersistentRelayClient(t *testing.T) {
-	server := httptest.NewServer(devrelay.New())
+	server := httptest.NewServer(relay.NewHandler(relay.NewMemoryStore(), relay.Options{}))
 	defer server.Close()
 	token := protocol.NewToken()
 	id := token.SessionID()

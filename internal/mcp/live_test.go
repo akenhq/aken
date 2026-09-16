@@ -14,18 +14,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/akenhq/aken/internal/devrelay"
 	"github.com/akenhq/aken/internal/session"
 	"github.com/akenhq/aken/protocol"
+	"github.com/akenhq/aken/relay"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func liveFixture(t *testing.T) (*Server, *protocol.RelayClient, protocol.SessionKeys, protocol.SessionID) {
 	t.Helper()
-	relay := httptest.NewServer(devrelay.New())
-	t.Cleanup(relay.Close)
+	server := httptest.NewServer(relay.NewHandler(relay.NewMemoryStore(), relay.Options{}))
+	t.Cleanup(server.Close)
 	token := protocol.NewToken()
-	client, err := protocol.NewRelayClient(relay.URL, token.RelayCredential())
+	client, err := protocol.NewRelayClient(server.URL, token.RelayCredential())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func liveFixture(t *testing.T) (*Server, *protocol.RelayClient, protocol.Session
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{SessionPath: filepath.Join(t.TempDir(), "session.json"), Relay: relay.URL, AllowChatJoin: true}
+	s := &Server{SessionPath: filepath.Join(t.TempDir(), "session.json"), Relay: server.URL, AllowChatJoin: true}
 	cs := connect(t, s)
 	text, _ := call(t, cs, "join", map[string]any{"token": token.Encode()})
 	want := fmt.Sprintf("Joined live session %s via chat. It expires at %s. This token has been in the chat transcript.", token.SessionID(), info.ExpiresAt.UTC().Format(time.RFC3339))
@@ -335,8 +335,8 @@ func TestLiveJoinAuthentication(t *testing.T) {
 				t.Fatal(err)
 			}
 			mac := protocol.CollectorMAC(token.ExchangeKey(), token.SessionID(), pair.Public())
-			backing := devrelay.New()
-			relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			backing := relay.NewHandler(relay.NewMemoryStore(), relay.Options{})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/join") {
 					if where == "unsupported" {
 						http.NotFound(w, r)
@@ -350,8 +350,8 @@ func TestLiveJoinAuthentication(t *testing.T) {
 				}
 				backing.ServeHTTP(w, r)
 			}))
-			defer relay.Close()
-			client, err := protocol.NewRelayClient(relay.URL, token.RelayCredential())
+			defer server.Close()
+			client, err := protocol.NewRelayClient(server.URL, token.RelayCredential())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -361,7 +361,7 @@ func TestLiveJoinAuthentication(t *testing.T) {
 			if _, err := client.CreatePersistentSession(t.Context(), token.SessionID(), time.Hour, pair.Public(), mac); err != nil {
 				t.Fatal(err)
 			}
-			s := &Server{SessionPath: filepath.Join(t.TempDir(), "session.json"), Relay: relay.URL, AllowChatJoin: true}
+			s := &Server{SessionPath: filepath.Join(t.TempDir(), "session.json"), Relay: server.URL, AllowChatJoin: true}
 			got, err := connect(t, s).CallTool(t.Context(), &mcp.CallToolParams{Name: "join", Arguments: map[string]any{"token": token.Encode()}})
 			want := "aken-mcp: join rejected: bad authentication"
 			if where == "unsupported" {
@@ -398,5 +398,17 @@ func TestLiveLargeResult(t *testing.T) {
 	out, _, err := renderResult(protocol.Result{ID: "j1", Status: "ok", Lines: []string{line}})
 	if err != nil || out.Content[0].(*mcp.TextContent).Text != line+"\n" {
 		t.Fatalf("live output was cut to artifact cap: %v", err)
+	}
+}
+
+func TestRelayLimitHint(t *testing.T) {
+	limited := &protocol.RelayError{Status: 429, Code: "server_limit", Message: "allowance reached"}
+	want := "allowance reached. To avoid this limit, run your own relay: https://github.com/akenhq/aken/blob/main/docs/relay.md"
+	if got := RelayLimitHint(limited); got == nil || got.Error() != want {
+		t.Fatal(got)
+	}
+	other := &protocol.RelayError{Status: 429, Code: "rate_limited"}
+	if RelayLimitHint(other) != other || RelayLimitHint(nil) != nil {
+		t.Fatal("unrelated error changed")
 	}
 }

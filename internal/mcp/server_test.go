@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/akenhq/aken/internal/artifact"
-	"github.com/akenhq/aken/internal/devrelay"
 	"github.com/akenhq/aken/internal/session"
 	"github.com/akenhq/aken/protocol"
+	"github.com/akenhq/aken/relay"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -114,13 +114,13 @@ func TestServer(t *testing.T) {
 
 func TestLoadCacheAndJoin(t *testing.T) {
 	s, stored := fixture(t, "hello <ip#1>\n")
-	relay := httptest.NewServer(devrelay.New())
-	defer relay.Close()
+	server := httptest.NewServer(relay.NewHandler(relay.NewMemoryStore(), relay.Options{}))
+	defer server.Close()
 	token, err := stored.ParsedToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := protocol.NewRelayClient(relay.URL, token.RelayCredential())
+	client, err := protocol.NewRelayClient(server.URL, token.RelayCredential())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,13 +149,13 @@ func TestLoadCacheAndJoin(t *testing.T) {
 	if err := client.PutManifest(t.Context(), token.SessionID(), encrypted); err != nil {
 		t.Fatal(err)
 	}
-	stored.Relay = relay.URL
+	stored.Relay = server.URL
 	if err := session.Save(s.SessionPath, stored); err != nil {
 		t.Fatal(err)
 	}
 	s.loaded = nil
 	s.AllowChatJoin = true
-	s.Relay = relay.URL
+	s.Relay = server.URL
 	cs := connect(t, s)
 	call(t, cs, "sources", map[string]any{})
 	if err := client.DeleteSession(t.Context(), token.SessionID()); err != nil {
@@ -170,7 +170,7 @@ func TestLoadCacheAndJoin(t *testing.T) {
 		t.Fatalf("join = %s, %v", text, meta)
 	}
 	joined, err := session.Load(s.SessionPath)
-	if err != nil || joined.JoinedVia != "chat" || joined.Relay != relay.URL || s.loaded != nil {
+	if err != nil || joined.JoinedVia != "chat" || joined.Relay != server.URL || s.loaded != nil {
 		t.Fatalf("join did not replace session: %v", err)
 	}
 	got, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "sources", Arguments: map[string]any{}})

@@ -32,7 +32,7 @@ jobs:
         uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
       - name: SBOM per binary
         run: |
-          for f in dist/aken_* dist/aken-mcp_* dist/aken-devrelay_*; do
+          for f in dist/aken_* dist/aken-mcp_* dist/aken-relay_*; do
             "${{ steps.syft.outputs.cmd }}" scan "file:$f" -o spdx-json > "$f.sbom.spdx.json"
           done
       - name: Checksum every release asset, binaries and SBOMs
@@ -58,7 +58,7 @@ jobs:
           subject-path: |
             dist/aken_*
             dist/aken-mcp_*
-            dist/aken-devrelay_*
+            dist/aken-relay_*
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

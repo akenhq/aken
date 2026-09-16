@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/akenhq/aken/internal/devrelay"
 	"github.com/akenhq/aken/internal/session"
 	"github.com/akenhq/aken/protocol"
+	"github.com/akenhq/aken/relay"
 )
 
 func TestRun(t *testing.T) {
@@ -69,10 +69,10 @@ func TestJoinStatusEnd(t *testing.T) {
 	original := sessionPath
 	sessionPath = filepath.Join(t.TempDir(), "aken", "session.json")
 	t.Cleanup(func() { sessionPath = original })
-	relay := httptest.NewServer(devrelay.New())
-	defer relay.Close()
+	server := httptest.NewServer(relay.NewHandler(relay.NewMemoryStore(), relay.Options{}))
+	defer server.Close()
 	token := protocol.NewToken()
-	client, err := protocol.NewRelayClient(relay.URL, token.RelayCredential())
+	client, err := protocol.NewRelayClient(server.URL, token.RelayCredential())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,13 +87,13 @@ func TestJoinStatusEnd(t *testing.T) {
 			t.Fatal("token leaked")
 		}
 	}
-	invoke([]string{"join", "--relay", relay.URL}, token.Encode()+"\n", 1, "aken-mcp: no artifact for this token on "+relay.URL+": it expired, was deleted, or the upload did not finish\n")
+	invoke([]string{"join", "--relay", server.URL}, token.Encode()+"\n", 1, "aken-mcp: no artifact for this token on "+server.URL+": it expired, was deleted, or the upload did not finish\n")
 	info, err := client.CreateSession(t.Context(), token.SessionID(), time.Hour, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	joined := "Joined session " + token.SessionID().String() + ". The artifact expires at " + info.ExpiresAt.Format(time.RFC3339) + ".\n"
-	invoke([]string{"join", "--relay", relay.URL}, "  "+token.Encode()+"  \nignored", 0, joined)
+	invoke([]string{"join", "--relay", server.URL}, "  "+token.Encode()+"  \nignored", 0, joined)
 	reader, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -104,23 +104,23 @@ func TestJoinStatusEnd(t *testing.T) {
 	}
 	_ = writer.Close()
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"join", "--relay", relay.URL}, reader, &stdout, &stderr); code != 0 || stdout.String() != joined || stderr.Len() != 0 {
+	if code := run([]string{"join", "--relay", server.URL}, reader, &stdout, &stderr); code != 0 || stdout.String() != joined || stderr.Len() != 0 {
 		t.Fatalf("piped join: exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
 	}
 	stored, err := session.Load(sessionPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Version != 2 || stored.Mode != "blob" || stored.JoinedVia != "cli" || stored.Token != token.Encode() || stored.Relay != relay.URL || !stored.ExpiresAt.Equal(info.ExpiresAt) {
+	if stored.Version != 2 || stored.Mode != "blob" || stored.JoinedVia != "cli" || stored.Token != token.Encode() || stored.Relay != server.URL || !stored.ExpiresAt.Equal(info.ExpiresAt) {
 		t.Fatal("wrong stored session")
 	}
-	invoke([]string{"status"}, "", 0, "Session "+stored.SessionID+" on "+relay.URL+", mode blob,")
+	invoke([]string{"status"}, "", 0, "Session "+stored.SessionID+" on "+server.URL+", mode blob,")
 	stored.ExpiresAt = time.Now().Add(-time.Minute)
 	if err := session.Save(sessionPath, stored); err != nil {
 		t.Fatal(err)
 	}
 	invoke([]string{"status"}, "", 0, " (expired)\n")
-	invoke([]string{"join", token.Encode(), "--relay", relay.URL}, "", 0, joined)
+	invoke([]string{"join", token.Encode(), "--relay", server.URL}, "", 0, joined)
 	invoke([]string{"end"}, "", 0, "Ended session "+stored.SessionID+"; the artifact is deleted from the relay.\n")
 	if _, err := client.Session(t.Context(), token.SessionID()); !protocol.IsNotFound(err) {
 		t.Fatalf("not deleted: %v", err)
@@ -138,10 +138,10 @@ func TestLiveJoinStatusEnd(t *testing.T) {
 			original := sessionPath
 			sessionPath = filepath.Join(t.TempDir(), "session.json")
 			t.Cleanup(func() { sessionPath = original })
-			relay := httptest.NewServer(devrelay.New())
-			defer relay.Close()
+			server := httptest.NewServer(relay.NewHandler(relay.NewMemoryStore(), relay.Options{}))
+			defer server.Close()
 			token := protocol.NewToken()
-			client, err := protocol.NewRelayClient(relay.URL, token.RelayCredential())
+			client, err := protocol.NewRelayClient(server.URL, token.RelayCredential())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -158,7 +158,7 @@ func TestLiveJoinStatusEnd(t *testing.T) {
 				t.Fatal(err)
 			}
 			var stdout, stderr bytes.Buffer
-			code := run([]string{"join", "--relay", relay.URL}, strings.NewReader(token.Encode()+"\n"), &stdout, &stderr)
+			code := run([]string{"join", "--relay", server.URL}, strings.NewReader(token.Encode()+"\n"), &stdout, &stderr)
 			if badMAC {
 				if code != 1 || stderr.String() != "aken-mcp: join rejected: bad authentication\n" || stdout.Len() != 0 {
 					t.Fatalf("bad MAC: exit %d, %q, %q", code, stdout.String(), stderr.String())
@@ -205,7 +205,7 @@ func TestLiveJoinStatusEnd(t *testing.T) {
 				}
 				stdout.Reset()
 				stderr.Reset()
-				code := run([]string{"join", token.Encode(), "--relay", relay.URL}, strings.NewReader(""), &stdout, &stderr)
+				code := run([]string{"join", token.Encode(), "--relay", server.URL}, strings.NewReader(""), &stdout, &stderr)
 				if code != 1 || stdout.Len() != 0 || stderr.String() != "aken-mcp: this token was already used to join a live session; run aken serve again and join its new token\n" {
 					t.Fatalf("re-join: exit %d, %q, %q", code, stdout.String(), stderr.String())
 				}

@@ -154,7 +154,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return failure(stderr, fmt.Errorf("no artifact for this token on %s: it expired, was deleted, or the upload did not finish", client.BaseURL))
 		}
 		if err != nil {
-			return failure(stderr, err)
+			return failure(stderr, akenmcp.RelayLimitHint(err))
 		}
 		stored, err := session.Join(ctx, client, token, info, "cli", time.Now())
 		if err != nil {

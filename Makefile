@@ -3,7 +3,7 @@ SHELL := bash
 
 MODULE   := github.com/akenhq/aken
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-BINARIES := aken aken-mcp aken-devrelay
+BINARIES := aken aken-mcp aken-relay
 TARGETS  := linux/amd64 linux/arm64 darwin/arm64
 DIST     ?= dist
 
@@ -29,14 +29,14 @@ lint:
 	golangci-lint run ./...
 
 # Dependency budget (DEPENDENCIES.md): the collector may link golang.org/x/term and its dependency
-# golang.org/x/sys besides the standard library; the dev relay links nothing outside it.
+# golang.org/x/sys besides the standard library; the relay may link the AWS SDK and x/time.
 depcheck:
 	@check() { \
 	  deps=$$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' $$1 | sed '/^$$/d' | grep -v '^$(MODULE)/' | grep -Ev "$$2" || true); \
 	  if [ -n "$$deps" ]; then echo "$$1 links packages outside its budget:"; echo "$$deps"; exit 1; fi; \
 	}; \
 	check ./cmd/aken '^golang.org/x/(term|sys)(/|$$)'; \
-	check ./cmd/aken-devrelay '^$$'
+	check ./cmd/aken-relay '^(github.com/aws/(aws-sdk-go-v2|smithy-go)|golang.org/x/time)(/|$$)'
 	@echo "depcheck: ok"
 
 release:
@@ -49,7 +49,7 @@ release:
 	done
 
 sums:
-	cd "$(DIST)"; assets=(aken_* aken-mcp_* aken-devrelay_*); \
+	cd "$(DIST)"; assets=(aken_* aken-mcp_* aken-relay_*); \
 	  for script in install.sh run.sh install-mcp.sh; do \
 	    if [[ -f "$$script" ]]; then assets+=("$$script"); fi; \
 	  done; \
