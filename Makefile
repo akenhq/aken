@@ -11,7 +11,7 @@ export CGO_ENABLED := 0
 BUILDFLAGS := -trimpath -buildvcs=false
 LDFLAGS    := -s -w -buildid= -X $(MODULE)/internal/buildinfo.version=$(VERSION)
 
-.PHONY: build test vet lint depcheck release sums render test-install repro check clean
+.PHONY: build test vet lint depcheck release sums render npm test-install repro check clean
 
 build:
 	@mkdir -p bin
@@ -60,9 +60,13 @@ render:
 	bash packaging/render.sh "$(DIST)" "$(VERSION)" once > "$(DIST)/run.sh"
 	bash packaging/render.sh "$(DIST)" "$(VERSION)" mcp > "$(DIST)/install-mcp.sh"
 
+npm:
+	bash packaging/npm.sh "$(DIST)" "$(VERSION)" "$(DIST)-npm"
+
 test-install:
 	bash packaging/install_test.sh
 	bash packaging/install_mcp_test.sh
+	bash packaging/npm_test.sh
 
 # Build every release target twice in separate directories and require identical hashes.
 repro:
@@ -75,4 +79,4 @@ repro:
 check: lint vet test depcheck repro test-install
 
 clean:
-	rm -rf bin $(DIST) $(DIST)-repro-a $(DIST)-repro-b
+	rm -rf bin $(DIST) $(DIST)-npm $(DIST)-repro-a $(DIST)-repro-b

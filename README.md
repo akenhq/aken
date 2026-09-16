@@ -56,17 +56,18 @@ On the server, install the collector:
 curl -fsSL https://aken.dev/install.sh | sudo bash
 ```
 
-On your own machine, install the local MCP (Linux or Apple Silicon macOS):
+On your own machine, install the local MCP (Linux or Apple Silicon macOS)
+with Node 18 or later:
 
 ```sh
-curl -fsSL https://aken.dev/install-mcp.sh | bash
+npm install -g aken-mcp
 ```
 
-Follow any PATH instruction printed by the installer. Register the MCP with
-Claude Code:
+Without Node, use the [MCP installer](docs/install.md#install-the-mcp-on-your-machine).
+Register the MCP with Claude Code:
 
 ```sh
-claude mcp add aken -- "$HOME/.local/bin/aken-mcp" serve
+claude mcp add aken -- aken-mcp serve
 ```
 
 For Codex CLI or Cursor, see [Use the local MCP](docs/mcp.md#install).
