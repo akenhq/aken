@@ -2,8 +2,14 @@
 
 ## Install
 
-On your own Linux or Apple Silicon Mac machine, install `aken-mcp` as your
-normal user:
+On your own Linux or Apple Silicon Mac machine, install `aken-mcp` with
+Node 18 or later:
+
+```sh
+npm install -g aken-mcp
+```
+
+Without Node, use the script installer as your normal user:
 
 ```sh
 curl -fsSL https://aken.dev/install-mcp.sh | bash

@@ -5,7 +5,7 @@ Install both parts of Aken:
 - [Install the collector on your server](#install-the-collector-on-your-server).
 - [Install the MCP on your machine](#install-the-mcp-on-your-machine), then connect your coding agent.
 
-Both installers download a release binary and check its SHA-256 hash against
+Both script installers download a release binary and check its SHA-256 hash against
 an embedded hash. To verify a script's signature before running it, see
 [Verify the script](#verify-the-script).
 
@@ -25,7 +25,36 @@ curl -fsSL https://github.com/akenhq/aken/releases/latest/download/install.sh | 
 
 ## Install the MCP on your machine
 
-Run this as your normal user on Linux (amd64 or arm64) or macOS (Apple Silicon):
+With Node 18 or later, install on Linux (x64 or arm64) or macOS arm64
+(Apple Silicon):
+
+```sh
+npm install -g aken-mcp
+```
+
+The package runs no install scripts. Its platform-specific optional dependency
+contains the same binary as the signed GitHub release asset.
+Then [connect your agent](mcp.md#install) and [join a session](mcp.md#join-a-session).
+
+To check the binary, run `aken-mcp version` and verify that version's
+`SHA256SUMS` as described in [Verify a release by hand](#verify-a-release-by-hand).
+Print the installed binary's path, replacing `<os>-<arch>` with `linux-x64`,
+`linux-arm64`, or `darwin-arm64`:
+
+```sh
+(cd "$(npm root -g)/aken-mcp" && node -p "require.resolve('@akenhq/mcp-<os>-<arch>/bin/aken-mcp')")
+```
+
+Hash the printed path with `sha256sum` (on macOS, use `shasum -a 256`):
+
+```sh
+sha256sum "<binary-path>"
+```
+
+Compare the hash with the `aken-mcp_<os>_<arch>` line in the verified
+`SHA256SUMS`; the `x64` package matches the `amd64` release asset.
+
+Without Node, run the script installer as your normal user:
 
 ```sh
 curl -fsSL https://aken.dev/install-mcp.sh | bash
