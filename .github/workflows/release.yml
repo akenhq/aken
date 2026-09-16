@@ -81,6 +81,7 @@ jobs:
           npm install -g npm@11.17.0
           tag=latest
           case "$VERSION" in *-*) tag=next ;; esac
-          for package in dist-npm/akenhq-mcp-*.tgz dist-npm/aken-mcp-*.tgz; do
+          # A path without ./ reads as a GitHub owner/repo spec.
+          for package in ./dist-npm/akenhq-mcp-*.tgz ./dist-npm/aken-mcp-*.tgz; do
             npm stage publish "$package" --access public --tag "$tag"
           done
