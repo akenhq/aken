@@ -56,7 +56,8 @@ jobs:
             esac
           done < "$RUNNER_TEMP/aken-changes"
           docker exec aken-once-diff bash -euo pipefail -c '
-            test "$(stat -c "%u:%g:%a" /root/.local/state/aken)" = 0:0:700
+            # A dry run writes no local copy, so run-once must not create the state directory.
+            test ! -e /root/.local/state/aken
             test "$(stat -c "%a" /root)" = 700
             test ! -e /usr/local/bin/aken
             ! getent passwd aken
