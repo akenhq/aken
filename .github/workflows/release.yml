@@ -73,13 +73,14 @@ jobs:
           case "$VERSION" in *-*) prerelease="--prerelease" ;; esac
           gh release create "$VERSION" --verify-tag --generate-notes \
             --notes-file .github/RELEASE_NOTES_HEADER.md $prerelease dist/*
-      - name: Publish npm packages (trusted publishing)
+      # Staged versions stay invisible until a maintainer approves them with 2FA on npmjs.com.
+      # Approve the three platform packages before aken-mcp, which depends on them.
+      - name: Stage npm packages (trusted publishing)
         run: |
+          # npm stage needs npm 11.15.0 or later.
+          npm install -g npm@11.17.0
           tag=latest
           case "$VERSION" in *-*) tag=next ;; esac
-          for package in dist-npm/akenhq-mcp-*.tgz; do
-            npm publish "$package" --access public --tag "$tag"
-          done
-          for package in dist-npm/aken-mcp-*.tgz; do
-            npm publish "$package" --access public --tag "$tag"
+          for package in dist-npm/akenhq-mcp-*.tgz dist-npm/aken-mcp-*.tgz; do
+            npm stage publish "$package" --access public --tag "$tag"
           done
