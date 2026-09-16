@@ -15,17 +15,17 @@ import (
 	"time"
 
 	"github.com/akenhq/aken/internal/collect"
-	"github.com/akenhq/aken/internal/devrelay"
 	akenmcp "github.com/akenhq/aken/internal/mcp"
 	"github.com/akenhq/aken/internal/session"
 	"github.com/akenhq/aken/protocol"
+	"github.com/akenhq/aken/relay"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestOneShot(t *testing.T) {
 	t.Log("1. Start the relay and create 40 log lines")
-	relay := httptest.NewServer(devrelay.New())
-	t.Cleanup(relay.Close)
+	server := httptest.NewServer(relay.NewHandler(relay.NewMemoryStore(), relay.Options{}))
+	t.Cleanup(server.Close)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "logs", "app.log")
 	state := filepath.Join(dir, "state")
@@ -60,7 +60,7 @@ func TestOneShot(t *testing.T) {
 	now := time.Date(2026, time.September, 12, 14, 0, 0, 0, time.UTC)
 	var stdout, stderr bytes.Buffer
 	code := collect.Run(t.Context(), collect.Options{
-		Files: []string{path}, Allow: []string{dir}, RelayURL: relay.URL,
+		Files: []string{path}, Allow: []string{dir}, RelayURL: server.URL,
 		TTL: time.Hour, StateDir: state, Retention: 0,
 		Since: now.Add(-time.Hour), Until: now, Now: func() time.Time { return now },
 		Collector: "test",
@@ -160,7 +160,7 @@ func TestOneShot(t *testing.T) {
 	}
 
 	t.Log("5. Check that relay blobs contain no originals or placeholders")
-	client, err := protocol.NewRelayClient(relay.URL, token.RelayCredential())
+	client, err := protocol.NewRelayClient(server.URL, token.RelayCredential())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestOneShot(t *testing.T) {
 	}
 	s := &akenmcp.Server{SessionPath: filepath.Join(t.TempDir(), "session.json"), Version: "test"}
 	if err := session.Save(s.SessionPath, session.Session{
-		Version: 1, Token: tokens[0], Relay: relay.URL, SessionID: token.SessionID().String(),
+		Version: 1, Token: tokens[0], Relay: server.URL, SessionID: token.SessionID().String(),
 		ExpiresAt: remote.ExpiresAt, JoinedAt: now, JoinedVia: "cli",
 	}); err != nil {
 		t.Fatal(err)

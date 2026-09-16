@@ -249,7 +249,7 @@ func (s *Server) join(ctx context.Context, _ *mcp.CallToolRequest, in joinArgs) 
 		return nil, nil, fmt.Errorf("no artifact for this token on %s: it expired, was deleted, or the upload did not finish", client.BaseURL)
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, RelayLimitHint(err)
 	}
 	stored, err := session.Join(ctx, client, token, info, "chat", s.now())
 	if err != nil {

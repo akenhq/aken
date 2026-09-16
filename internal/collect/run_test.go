@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/akenhq/aken/internal/devrelay"
 	"github.com/akenhq/aken/internal/screen"
 	"github.com/akenhq/aken/protocol"
+	"github.com/akenhq/aken/relay"
 )
 
 func testOptions(t *testing.T, body string) Options {
@@ -104,9 +104,8 @@ func TestUploadRoundTrip(t *testing.T) {
 				body += strings.Repeat("ordinary log line\n", 70000)
 			}
 			o := testOptions(t, body)
-			relay := devrelay.New()
-			relay.Now = o.Now
-			server := httptest.NewServer(relay)
+			handler := relay.NewHandler(relay.NewMemoryStore(), relay.Options{Now: o.Now})
+			server := httptest.NewServer(handler)
 			defer server.Close()
 			o.RelayURL = server.URL
 			// Both explicit duplicates and glob aliases must produce a single source.
@@ -257,8 +256,7 @@ func TestUploadFailures(t *testing.T) {
 	for _, stage := range []string{"chunk cap", "ttl cap", "create", "local", "chunk", "manifest"} {
 		t.Run(stage, func(t *testing.T) {
 			o := testOptions(t, "line\n")
-			relay := devrelay.New()
-			relay.Now = o.Now
+			handler := relay.NewHandler(relay.NewMemoryStore(), relay.Options{Now: o.Now})
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/v0/info" && (stage == "chunk cap" || stage == "ttl cap") {
 					caps := protocol.DefaultCaps
@@ -276,7 +274,7 @@ func TestUploadFailures(t *testing.T) {
 					_, _ = w.Write([]byte(`{"error":"test_failure"}`))
 					return
 				}
-				relay.ServeHTTP(w, r)
+				handler.ServeHTTP(w, r)
 			}))
 			defer server.Close()
 			o.RelayURL = server.URL

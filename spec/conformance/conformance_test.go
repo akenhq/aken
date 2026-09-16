@@ -15,24 +15,38 @@ import (
 	"testing"
 	"time"
 
-	"github.com/akenhq/aken/internal/devrelay"
 	"github.com/akenhq/aken/protocol"
+	"github.com/akenhq/aken/relay"
 )
 
-func relayURL(t *testing.T) string {
+func runConformance(t *testing.T, test func(*testing.T)) {
 	t.Helper()
-	if url := os.Getenv("AKEN_RELAY_URL"); url != "" {
-		return url
+	if os.Getenv("AKEN_RELAY_URL") != "" {
+		test(t)
+		return
 	}
-	server := httptest.NewServer(devrelay.New())
-	t.Cleanup(server.Close)
-	return server.URL
+	for _, backend := range []string{"memory", "dir"} {
+		t.Run(backend, func(t *testing.T) {
+			var store relay.Store = relay.NewMemoryStore()
+			if backend == "dir" {
+				var err error
+				store, err = relay.NewDirStore(t.TempDir())
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			server := httptest.NewServer(relay.NewHandler(store, relay.Options{}))
+			t.Cleanup(server.Close)
+			t.Setenv("AKEN_RELAY_URL", server.URL)
+			test(t)
+		})
+	}
 }
 
 func newClient(t *testing.T) (*protocol.RelayClient, protocol.Token) {
 	t.Helper()
 	token := protocol.NewToken()
-	client, err := protocol.NewRelayClient(relayURL(t), token.RelayCredential())
+	client, err := protocol.NewRelayClient(os.Getenv("AKEN_RELAY_URL"), token.RelayCredential())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +101,9 @@ func raw(t *testing.T, client *protocol.RelayClient, token protocol.Token, metho
 	return data
 }
 
-func TestInfoAndSession(t *testing.T) {
+func TestInfoAndSession(t *testing.T) { runConformance(t, testInfoAndSession) }
+
+func testInfoAndSession(t *testing.T) {
 	client, token := newClient(t)
 	info, err := client.Info(t.Context())
 	if err != nil || !slices.Contains(info.ProtocolVersions, 1) || info.Caps != protocol.DefaultCaps {
@@ -113,7 +129,9 @@ func TestInfoAndSession(t *testing.T) {
 	relayError(t, err, 404, "not_found")
 }
 
-func TestAuthentication(t *testing.T) {
+func TestAuthentication(t *testing.T) { runConformance(t, testAuthentication) }
+
+func testAuthentication(t *testing.T) {
 	client, token := newClient(t)
 	if _, err := client.CreateSession(t.Context(), token.SessionID(), 0, 1); err != nil {
 		t.Fatal(err)
@@ -135,13 +153,17 @@ func TestAuthentication(t *testing.T) {
 	relayError(t, err, 404, "not_found")
 }
 
-func TestTTL(t *testing.T) {
+func TestTTL(t *testing.T) { runConformance(t, testTTL) }
+
+func testTTL(t *testing.T) {
 	client, token := newClient(t)
 	_, err := client.CreateSession(t.Context(), token.SessionID(), protocol.MaxTTL+time.Second, 1)
 	relayError(t, err, 400, "ttl_too_long")
 }
 
-func TestChunkRejections(t *testing.T) {
+func TestChunkRejections(t *testing.T) { runConformance(t, testChunkRejections) }
+
+func testChunkRejections(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
 		index  uint64
@@ -164,7 +186,9 @@ func TestChunkRejections(t *testing.T) {
 	}
 }
 
-func TestUpload(t *testing.T) {
+func TestUpload(t *testing.T) { runConformance(t, testUpload) }
+
+func testUpload(t *testing.T) {
 	client, token := newClient(t)
 	id := token.SessionID()
 	if _, err := client.CreateSession(t.Context(), id, 0, 3); err != nil {
@@ -219,7 +243,9 @@ func joinPersistent(t *testing.T, client *protocol.RelayClient, token protocol.T
 	return info
 }
 
-func TestPersistentSessionAndJoin(t *testing.T) {
+func TestPersistentSessionAndJoin(t *testing.T) { runConformance(t, testPersistentSessionAndJoin) }
+
+func testPersistentSessionAndJoin(t *testing.T) {
 	client, token := newClient(t)
 	id := token.SessionID()
 	created := createPersistent(t, client, token)
@@ -260,7 +286,9 @@ func TestPersistentSessionAndJoin(t *testing.T) {
 	}
 }
 
-func TestPersistentMessages(t *testing.T) {
+func TestPersistentMessages(t *testing.T) { runConformance(t, testPersistentMessages) }
+
+func testPersistentMessages(t *testing.T) {
 	for _, kind := range []string{"jobs", "results"} {
 		t.Run(kind, func(t *testing.T) {
 			client, token := newClient(t)
@@ -337,7 +365,9 @@ func TestPersistentMessages(t *testing.T) {
 	}
 }
 
-func TestPersistentDeleteWakesPoll(t *testing.T) {
+func TestPersistentDeleteWakesPoll(t *testing.T) { runConformance(t, testPersistentDeleteWakesPoll) }
+
+func testPersistentDeleteWakesPoll(t *testing.T) {
 	client, token := newClient(t)
 	createPersistent(t, client, token)
 	joinPersistent(t, client, token)
@@ -361,7 +391,9 @@ func TestPersistentDeleteWakesPoll(t *testing.T) {
 	}
 }
 
-func TestPersistentCompatibility(t *testing.T) {
+func TestPersistentCompatibility(t *testing.T) { runConformance(t, testPersistentCompatibility) }
+
+func testPersistentCompatibility(t *testing.T) {
 	client, token := newClient(t)
 	created, err := client.CreateSession(t.Context(), token.SessionID(), 0, 1)
 	if err != nil || created.Mode != "blob" || created.Joined || created.CollectorKey != "" || created.CollectorMAC != "" {

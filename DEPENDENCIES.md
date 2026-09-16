@@ -12,13 +12,24 @@ that longer and adds a supply-chain party.
 |---|---|---|
 | `aken` (collector) | `golang.org/x/term` and its dependency `golang.org/x/sys` | Terminal handling for the review screen; nothing else outside the standard library |
 | `aken-mcp` | Official MCP SDK `github.com/modelcontextprotocol/go-sdk` v1.7.0 and its transitive modules, plus `golang.org/x/term` | SDK with stdio transport; modules listed below |
-| `aken-devrelay` | Nothing | Standard library only |
+| `aken-relay` | AWS SDK for Go v2 and `github.com/aws/smithy-go`; `golang.org/x/time` | R2 storage and rate limits; runs on the relay host, not on customer servers |
 
-`go.mod` pins `golang.org/x/term` to v0.46.0. The indirect modules in
-`go.mod` are:
+`go.mod` pins `golang.org/x/term` to v0.46.0. The other modules used by the MCP and relay are:
 
 | Module | Version |
 |---|---|
+| `github.com/aws/aws-sdk-go-v2` | v1.47.0 |
+| `github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream` | v1.7.20 |
+| `github.com/aws/aws-sdk-go-v2/credentials` | v1.20.4 |
+| `github.com/aws/aws-sdk-go-v2/internal/configsources` | v1.5.3 |
+| `github.com/aws/aws-sdk-go-v2/internal/endpoints/v2` | v2.8.3 |
+| `github.com/aws/aws-sdk-go-v2/internal/v4a` | v1.5.3 |
+| `github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding` | v1.13.19 |
+| `github.com/aws/aws-sdk-go-v2/service/internal/checksum` | v1.11.3 |
+| `github.com/aws/aws-sdk-go-v2/service/internal/presigned-url` | v1.14.3 |
+| `github.com/aws/aws-sdk-go-v2/service/internal/s3shared` | v1.20.3 |
+| `github.com/aws/aws-sdk-go-v2/service/s3` | v1.113.1 |
+| `github.com/aws/smithy-go` | v1.28.1 |
 | `github.com/google/jsonschema-go` | v0.4.3 |
 | `github.com/segmentio/asm` | v1.1.3 |
 | `github.com/segmentio/encoding` | v0.5.4 |
@@ -26,7 +37,7 @@ that longer and adds a supply-chain party.
 | `golang.org/x/oauth2` | v0.35.0 |
 | `golang.org/x/sync` | v0.20.0 |
 | `golang.org/x/sys` | v0.48.0 |
-| `golang.org/x/time` | v0.15.0 |
+| `golang.org/x/time` | v0.16.0 |
 
 Why the SDK: the MCP runs on the developer's machine, not on the server. A
 maintained official implementation of a moving protocol is safer than a
@@ -36,7 +47,8 @@ hand-written one. The audit path below covers the server binary.
 
 `make depcheck` covers `aken`, allowing only `golang.org/x/term` and
 `golang.org/x/sys` outside the standard library and this module, and
-`aken-devrelay`, allowing only the standard library and this module. CI runs
+`aken-relay`, allowing the AWS SDK, `github.com/aws/smithy-go`, and
+`golang.org/x/time`. CI runs
 it on every push. When you change the budget, update the target and this file
 in the same pull request.
 

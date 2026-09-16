@@ -17,12 +17,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/akenhq/aken/internal/devrelay"
 	akenmcp "github.com/akenhq/aken/internal/mcp"
 	"github.com/akenhq/aken/internal/serve"
 	"github.com/akenhq/aken/internal/session"
 	"github.com/akenhq/aken/internal/source"
 	"github.com/akenhq/aken/protocol"
+	"github.com/akenhq/aken/relay"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -278,17 +278,17 @@ type liveSession struct {
 func newLiveSession(t *testing.T, level int) *liveSession {
 	t.Helper()
 	now := time.Date(2026, time.September, 13, 14, 0, 0, 0, time.UTC)
-	dev := devrelay.New()
-	dev.Now = func() time.Time { return now }
-	relay := httptest.NewServer(dev)
-	t.Cleanup(relay.Close)
+	clock := func() time.Time { return now }
+	handler := relay.NewHandler(relay.NewMemoryStore(), relay.Options{Now: clock})
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
 	dir, state := t.TempDir(), t.TempDir()
 	rules := filepath.Join(state, "rules.json")
 	writeSessionFile(t, rules, `{"version":1,"rules":[]}`)
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	h := &liveSession{ctx: ctx, done: make(chan struct{}), path: filepath.Join(dir, "app"), flagPath: filepath.Join(dir, "flagged.log"), sessionPath: filepath.Join(t.TempDir(), "session.json")}
 	// The generated fixture path must not itself trigger entropy review in search output.
-	h.options = serve.Options{Level: level, TTL: time.Hour, RelayURL: relay.URL, Allow: []string{dir}, Keep: []string{h.path}, StateDir: state, RulesFile: rules, Now: dev.Now, Argv: []string{"serve"}}
+	h.options = serve.Options{Level: level, TTL: time.Hour, RelayURL: server.URL, Allow: []string{dir}, Keep: []string{h.path}, StateDir: state, RulesFile: rules, Now: clock, Argv: []string{"serve"}}
 	writeSessionFile(t, h.path, "request from 203.0.113.7\nrequest completed\nrequest from 203.0.113.7\n")
 	writeSessionFile(t, h.flagPath, "ordinary\n"+flaggedValue+"\n")
 	in, input := io.Pipe()
@@ -325,11 +325,11 @@ func newLiveSession(t *testing.T, level int) *liveSession {
 	defer token.Zero()
 	h.id = token.SessionID()
 	h.auditPath = filepath.Join(state, "sessions", "20260913T140000Z-"+h.id.String()[:8])
-	want := fmt.Sprintf("aken serve: session open on %s, level %d, expires 2026-09-13T15:00:00Z\nScope    /var/log, %s\nLocal    %s\nRedaction   14 rules (14 default, 0 from %s); kept: %s\n\nSession token. Paste it into `aken-mcp join` on your machine, not into the agent chat:\n\n  %s\n\nWaiting for the local MCP to join. Ctrl-C ends the session.\n", relay.URL, level, dir, h.auditPath, rules, h.path, tokens[0])
+	want := fmt.Sprintf("aken serve: session open on %s, level %d, expires 2026-09-13T15:00:00Z\nScope    /var/log, %s\nLocal    %s\nRedaction   14 rules (14 default, 0 from %s); kept: %s\n\nSession token. Paste it into `aken-mcp join` on your machine, not into the agent chat:\n\n  %s\n\nWaiting for the local MCP to join. Ctrl-C ends the session.\n", server.URL, level, dir, h.auditPath, rules, h.path, tokens[0])
 	if opening != want {
 		t.Fatalf("opening = %q, want %q", opening, want)
 	}
-	h.client, err = protocol.NewRelayClient(relay.URL, token.RelayCredential())
+	h.client, err = protocol.NewRelayClient(server.URL, token.RelayCredential())
 	if err != nil {
 		t.Fatal(err)
 	}

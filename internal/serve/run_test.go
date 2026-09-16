@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/akenhq/aken/internal/devrelay"
 	"github.com/akenhq/aken/protocol"
+	"github.com/akenhq/aken/relay"
 )
 
 type output struct {
@@ -67,7 +67,7 @@ type liveTest struct {
 
 func startLive(t *testing.T, level int, input io.Reader, ttl time.Duration) *liveTest {
 	t.Helper()
-	server := httptest.NewServer(devrelay.New())
+	server := httptest.NewServer(relay.NewHandler(relay.NewMemoryStore(), relay.Options{}))
 	t.Cleanup(server.Close)
 	dir := t.TempDir()
 	o := Options{Level: level, TTL: ttl, RelayURL: server.URL, Allow: []string{dir}, StateDir: t.TempDir(), Now: time.Now, Argv: []string{"serve"}}

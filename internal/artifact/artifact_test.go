@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/akenhq/aken/internal/devrelay"
 	"github.com/akenhq/aken/protocol"
+	"github.com/akenhq/aken/relay"
 )
 
 func manifest(parts ...string) (protocol.Manifest, []byte) {
@@ -170,10 +170,10 @@ func TestSearchAdjacentMatches(t *testing.T) {
 func TestLoad(t *testing.T) {
 	for _, mode := range []string{"ok", "hash", "auth", "manifest auth", "manifest missing", "session missing", "chunk length"} {
 		t.Run(mode, func(t *testing.T) {
-			relay := httptest.NewServer(devrelay.New())
-			defer relay.Close()
+			server := httptest.NewServer(relay.NewHandler(relay.NewMemoryStore(), relay.Options{}))
+			defer server.Close()
 			token := protocol.NewToken()
-			client, err := protocol.NewRelayClient(relay.URL, token.RelayCredential())
+			client, err := protocol.NewRelayClient(server.URL, token.RelayCredential())
 			if err != nil {
 				t.Fatal(err)
 			}

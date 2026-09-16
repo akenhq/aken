@@ -263,8 +263,8 @@ exceeding the artifact size limit are failures or refusals.
 ## Relay
 
 `--relay URL` selects the relay base URL. The default is
-`https://relay.aken.dev`. Use HTTPS except for a development relay on loopback,
-where plain HTTP is allowed. For the default development relay address:
+`https://relay.aken.dev`. Use HTTPS except for a local relay on loopback,
+where plain HTTP is allowed. Start a local relay with `aken-relay serve`, then use its default address:
 
 ```sh
 sudo -u aken aken collect --unit nginx --relay http://127.0.0.1:7788

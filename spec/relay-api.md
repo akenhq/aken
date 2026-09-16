@@ -76,7 +76,7 @@ requests and responses use `Content-Type: application/octet-stream`.
 | `collector_mac` | string | Required in session mode: collector MAC, same encoding and length |
 
 TTL above 86400 seconds must return 400 `ttl_too_long`. Negative TTL and invalid
-chunk counts, modes or session keys must return 400 `bad_request`. The dev relay caps creation JSON at
+chunk counts, modes or session keys must return 400 `bad_request`. The `relay` package caps creation JSON at
 2097152 bytes and returns 413 `too_large` above that size.
 
 `SessionInfo` has these fields:
@@ -132,7 +132,7 @@ must not reuse a token to encrypt a different artifact.
 
 The relay must set expiry at session creation and must not extend it on reads
 or uploads. At or after expiry, every access must treat the session as missing
-and delete its state. The dev relay also sweeps expired sessions every 30 seconds.
+and delete its state. `aken-relay` also sweeps expired sessions at startup and every ten minutes.
 DELETE must remove the session, its credential hash, all chunks, and its manifest.
 
 ## Errors and client behavior
@@ -160,13 +160,14 @@ and error strings are fixed:
 | 409 | `bad_sequence` | Sequence differs from the next expected value and is not an identical replay of the last accepted envelope |
 | 409 | `wrong_mode` | Endpoint does not apply to the session mode |
 | 413 | `too_large` | Body or ciphertext exceeds its cap |
+| 429 | `server_limit` | Client address exceeded the server allowance; retry after `Retry-After` seconds |
 | 429 | `queue_full` | Direction already has 64 queued messages |
 | 426 | `unsupported_version` | Missing or unsupported protocol version |
 
 Unknown paths must return 404 `not_found`. Known paths accept only the methods
 listed in the endpoint table, including no implicit HEAD support.
 
-Clients must use HTTPS except for loopback development relays. The Go client
+Clients must use HTTPS except for loopback relays. The Go client
 accepts HTTP only for `localhost`, IP addresses in `127.0.0.0/8`, or `::1`. A base
 URL must not contain userinfo, a query, a fragment, or a path other than empty
 or `/`.
@@ -183,8 +184,13 @@ each queue response at `64 * (4 * ceil(ciphertext_cap / 3) + 1024)` bytes.
 ## Hosted relays
 
 Per-IP rate limits and abuse controls are hosted-relay policy outside this spec.
-Hosted relays return HTTP 429 when those controls reject a request. The dev relay
-has no accounts, rate limits, persistence, or TLS.
+Hosted relays return HTTP 429 when those controls reject a request. `aken-relay`
+provides per-IP limits and memory, directory, or R2 storage. TLS terminates
+at a reverse proxy or tunnel.
+
+A relay may cap how many distinct server addresses one client address pairs
+with in a rolling window. The server address is the address that created the
+session. Beyond the cap, the relay returns 429 `server_limit` with `Retry-After`.
 
 ## Join and queues
 
@@ -269,13 +275,13 @@ Both modes retain the 24-hour TTL cap, protocol header and bearer credential.
 
 ## Conformance
 
-Run `go test ./spec/conformance/ -count=1` for the in-process dev relay. Set
+Run `go test ./spec/conformance/ -count=1` for the in-process memory and directory stores. Set
 `AKEN_RELAY_URL` to run the same suite against another relay. Each test uses a
 fresh token and deletes its session afterward.
 
 ## Reference implementation
 
-The [`relay` package](../relay/) holds the request handling used by the dev relay
-and hosted relays. A hosted relay supplies a `Store` and its own limits through
+The [`relay` package](../relay/) holds the request handling used by `aken-relay`
+and other relays. A hosted relay supplies a `Store` and its own limits through
 `Options.Caps`. Run the conformance suite against the relay to check that its
 store behaves as this specification requires.

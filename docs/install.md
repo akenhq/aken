@@ -189,11 +189,11 @@ Download the assets for your operating system and architecture from the
 [releases page](https://github.com/akenhq/aken/releases), together with
 `SHA256SUMS` and `SHA256SUMS.sigstore.json`. Keep them in one download directory.
 
-| Platform | Collector | Local MCP | Dev relay |
+| Platform | Collector | Local MCP | Relay |
 |---|---|---|---|
-| Linux amd64 | `aken_linux_amd64` | `aken-mcp_linux_amd64` | `aken-devrelay_linux_amd64` |
-| Linux arm64 | `aken_linux_arm64` | `aken-mcp_linux_arm64` | `aken-devrelay_linux_arm64` |
-| macOS arm64 | `aken_darwin_arm64` | `aken-mcp_darwin_arm64` | `aken-devrelay_darwin_arm64` |
+| Linux amd64 | `aken_linux_amd64` | `aken-mcp_linux_amd64` | `aken-relay_linux_amd64` |
+| Linux arm64 | `aken_linux_arm64` | `aken-mcp_linux_arm64` | `aken-relay_linux_arm64` |
+| macOS arm64 | `aken_darwin_arm64` | `aken-mcp_darwin_arm64` | `aken-relay_darwin_arm64` |
 
 In the commands below, replace `<tag>` with the release tag you downloaded.
 

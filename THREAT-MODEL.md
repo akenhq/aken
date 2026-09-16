@@ -23,8 +23,10 @@ structured observations, and a small process on the server decides what leaves i
 - The human operator owns the terminal on the server and the developer machine.
 - The coding agent is untrusted: log content may prompt-inject it.
 - The LLM provider sees everything the agent reads.
-- The relay operator sees envelopes and ciphertext, nothing else, and must not
-  be able to forge, replay, or reorder jobs or results.
+- Whoever runs a relay sees envelopes and ciphertext only, never content or tokens.
+  A relay with the allowance on keeps, in memory for its window, which client
+  addresses used sessions created from which server addresses.
+  The relay must not be able to forge, replay, or reorder jobs or results.
 - A network attacker can sit between any two parties.
 - An attacker with the developer machine holds session keys and can read what
   the session reads until the session ends.

@@ -21,10 +21,10 @@ professionally reviewed.
 |---|---|
 | `cmd/aken` | Collector |
 | `cmd/aken-mcp` | Local MCP |
-| `cmd/aken-devrelay` | In-memory relay for development |
+| `cmd/aken-relay` | Relay with memory, directory, or R2 storage |
 | `protocol/` | Tokens, artifacts, and relay client |
-| `relay/` | Relay API v0 request handling shared by the dev relay and hosted relays |
-| `internal/` | Collector, redaction, MCP, and dev relay packages |
+| `relay/` | Relay API v0 request handling used by `aken-relay` and other relays |
+| `internal/` | Collector, redaction, MCP, and relay service packages |
 | `rules/` | Default redaction rules |
 | `spec/` | Specifications, vectors, and the conformance suite |
 | `docs/` | User docs |
@@ -114,6 +114,7 @@ aken-mcp status
 - [Install and verify](docs/install.md)
 - [Live sessions](docs/serve.md)
 - [Collect logs](docs/collect.md)
+- [Run your own relay](docs/relay.md)
 - [Docker logs](docs/docker.md)
 - [Redaction](docs/redaction.md)
 - [Use the local MCP](docs/mcp.md), including Claude Code, Codex CLI, and Cursor

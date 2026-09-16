@@ -152,6 +152,15 @@ func liveRelayError(err error) error {
 	if errors.As(err, &relayErr) && relayErr.Code == "bad_sequence" {
 		return errors.New("session sequence mismatch; restart the collector's aken serve and join the new token")
 	}
+	return RelayLimitHint(err)
+}
+
+// RelayLimitHint turns a server_limit relay error into an error that names the way around it.
+func RelayLimitHint(err error) error {
+	var relayErr *protocol.RelayError
+	if errors.As(err, &relayErr) && relayErr.Code == "server_limit" {
+		return fmt.Errorf("%s. To avoid this limit, run your own relay: https://github.com/akenhq/aken/blob/main/docs/relay.md", relayErr.Message)
+	}
 	return err
 }
 
