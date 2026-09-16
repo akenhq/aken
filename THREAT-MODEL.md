@@ -206,6 +206,13 @@ The install script is the trust root of the install path; verify it with
 checks the binary against an embedded hash; it does not run cosign itself.
 See [Install and verify](docs/install.md#verify-the-script).
 
+The installed `aken` command is a root-owned shell launcher of a dozen lines.
+Started as root, it switches to the `aken` user with `setpriv`, with that
+user's groups, a clean environment, no capabilities, and `no_new_privs`, and
+then runs the collector; started by any other user, it runs the collector as
+that user. It only lowers privilege, and the collector keeps refusing root.
+As in run-once mode, the shell runs as root for the moment before the switch.
+
 Run-once mode deletes the temporary directory on exit. With root, it stages
 state there as `nobody`, then copies it to the invoking user's
 `~/.local/state/aken` on exit, resolving the home from the passwd database,

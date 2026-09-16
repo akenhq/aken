@@ -74,10 +74,11 @@ For Codex CLI or Cursor, see [Use the local MCP](docs/mcp.md#install).
 See [Install and verify](docs/install.md) for signature verification,
 version selection, and the collector's run-once option.
 
-Open a live session on the server:
+Open a live session on the server. The `aken` command switches to the
+unprivileged `aken` user before the collector starts:
 
 ```sh
-sudo -u aken aken serve
+sudo aken serve
 ```
 
 On your machine, run this and paste the printed token at the prompt:
@@ -97,7 +98,7 @@ pause for send or drop. See [Live sessions](docs/serve.md) for levels and scope.
 For a one-shot artifact, run this on the server instead:
 
 ```sh
-sudo -u aken aken collect --unit nginx --since 1h
+sudo aken collect --unit nginx --since 1h
 ```
 
 Review the redacted content, then choose **send** to encrypt and upload it.

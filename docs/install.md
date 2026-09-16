@@ -95,13 +95,22 @@ For manual installation, see [Install the MCP by hand](#install-the-mcp-by-hand)
 
 The install script requires root. It selects the Linux amd64 or arm64 binary
 for your architecture, downloads it from its release, and checks its SHA-256
-hash against the hash embedded in the script. It installs `/usr/local/bin/aken`
-as root with mode `0755`.
+hash against the hash embedded in the script. It installs the collector as
+`/usr/local/libexec/aken` and a launcher as `/usr/local/bin/aken`, both owned
+by root with mode `0755`.
+
+The launcher is a shell script of a dozen lines. Started as root, it switches
+to the `aken` user with `setpriv`: that user's groups from the group database,
+a clean environment with `HOME`, `USER`, and `LOGNAME` set for `aken` and `TERM`
+kept, no capabilities, and `no_new_privs`. Then it runs the collector. Started
+as any other user, it runs the collector as that user, so `sudo -u aken aken`
+keeps working. The collector itself refuses root. The launcher's text is in
+[Install on the server by hand](#install-on-the-server-by-hand).
 
 The script creates the unprivileged `aken` user and `/var/lib/aken` state
 directory with mode `0700`, owned by `aken`. It adds `aken` to `adm` and
-`systemd-journal` where those groups exist. It prints the version and the
-`sudo -u aken aken collect --help` hint. The collector itself refuses root.
+`systemd-journal` where those groups exist. It prints the version, through
+the launcher, and the `sudo aken collect --help` hint.
 
 The script does not run cosign or offer `--skip-signature-check`. The install
 script is the trust root of the install path; verify it with
@@ -169,8 +178,8 @@ original values in the placeholder mapping. It cannot prevent journal entries
 from sshd or sudo.
 
 The scripts require `curl`, `sha256sum`, `mktemp`, and `install`. Install mode
-also requires `useradd`, `usermod`, and `getent`; root once mode requires `setpriv`
-and `getent`. Once mode reads collector input from `/dev/tty`
+also requires `useradd`, `usermod`, `getent`, and `setpriv`; root once mode
+requires `setpriv` and `getent`. Once mode reads collector input from `/dev/tty`
 so the approval screen can work while the script arrives through a pipe.
 Run it from a terminal.
 
@@ -283,10 +292,39 @@ After verification, run the following commands as root in the download
 directory on your Debian or Ubuntu server. Set `ARCH=amd64` for x86_64 or
 `ARCH=arm64` for aarch64 in that shell before you run them.
 
-Install the binary with root ownership so the collector user cannot replace it:
+Install the collector with root ownership so the collector user cannot replace it:
 
 ```sh
-install -o root -g root -m 0755 "aken_linux_${ARCH}" /usr/local/bin/aken
+install -d -o root -g root -m 0755 /usr/local/libexec
+install -o root -g root -m 0755 "aken_linux_${ARCH}" /usr/local/libexec/aken
+```
+
+Install the launcher as `/usr/local/bin/aken`. This is `packaging/launcher.sh` at
+the release tag, the same text the install script writes:
+
+```sh
+cat > /usr/local/bin/aken <<'AKEN_LAUNCHER'
+#!/bin/sh
+# Aken launcher. install.sh installs this file as /usr/local/bin/aken and the
+# collector as /usr/local/libexec/aken. Started as root, it switches to the
+# unprivileged aken user, with that user's groups, a clean environment, no
+# capabilities and no_new_privs, and then runs the collector. Started as any
+# other user, it runs the collector as that user. The collector refuses root.
+set -eu
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+collector=/usr/local/libexec/aken
+if [ "$(id -u)" -ne 0 ]; then
+  exec "$collector" "$@"
+fi
+if ! getent passwd aken >/dev/null 2>&1; then
+  printf '%s\n' 'aken: the aken user does not exist; run install.sh first' >&2
+  exit 1
+fi
+exec /usr/bin/setpriv --reset-env --reuid=aken --regid=aken --init-groups \
+  --inh-caps=-all --no-new-privs -- "$collector" "$@"
+AKEN_LAUNCHER
+chmod 0755 /usr/local/bin/aken
 ```
 
 Create the dedicated system user if it does not exist, with a home directory
@@ -345,12 +383,13 @@ Then [connect your agent](mcp.md#install) and [join a session](mcp.md#join-a-ses
 
 ## Run
 
-Run a smoke test as the `aken` user. Replace `<unit>` with a journald unit:
+Run a smoke test. Replace `<unit>` with a journald unit:
 
 ```sh
-sudo -u aken aken collect --dry-run --unit <unit>
+sudo aken collect --dry-run --unit <unit>
 ```
 
+The `aken` command switches to the `aken` user before the collector starts.
 This collects, redacts, and shows the review screen without uploading.
 See [Live sessions](serve.md) to open a session, [Collect logs](collect.md)
 to send an artifact, and [Docker logs](docker.md) to configure container logging.

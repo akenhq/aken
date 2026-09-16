@@ -15,9 +15,11 @@ only read jobs. For a single reviewed artifact, use [Collect logs](collect.md).
 
 ## Permissions
 
-Run the collector as the unprivileged `aken` user. It refuses root. Follow
-[Install and verify](install.md) to give that user membership in `adm` and
-`systemd-journal` where those groups exist.
+Start the collector with `sudo`. The installed `aken` command is a launcher
+that switches to the unprivileged `aken` user before the collector starts;
+the collector itself refuses root. Follow [Install and verify](install.md)
+to give that user membership in `adm` and `systemd-journal` where those
+groups exist.
 
 File jobs must stay under `/var/log` or a directory you add with `--allow DIR`.
 You can repeat `--allow`. The collector resolves canonical paths through
@@ -33,7 +35,7 @@ lookup. Container logs come from journald; see [Docker logs](docker.md).
 On the server, run:
 
 ```sh
-sudo -u aken aken serve
+sudo aken serve
 ```
 
 The opening block has this layout. The scope, redaction overrides, counts,

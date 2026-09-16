@@ -157,7 +157,7 @@ the result before sending.
 For example, keep one address and disable email redaction for this run:
 
 ```sh
-sudo -u aken aken collect --unit nginx --keep 10.0.0.5 --keep-category email
+sudo aken collect --unit nginx --keep 10.0.0.5 --keep-category email
 ```
 
 The review screen shows kept values after `kept:` and disabled categories
