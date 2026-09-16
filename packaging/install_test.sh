@@ -132,8 +132,9 @@ printf '%s\n' 'ok: --once, serve, and collector exit status'
 
 # Started by a non-root user, the launcher runs the collector as that user, arguments unchanged.
 # The root path, which switches to the aken user, runs in the CI container job.
-sed "s#^collector=.*#collector=$dist/aken_linux_amd64#" "$script_dir/launcher.sh" > "$test_dir/launcher"
-grep -Fq "collector=$dist/aken_linux_amd64" "$test_dir/launcher" || fail 'launcher collector path not replaced'
+install -m 0755 "$dist/aken_linux_amd64" "$test_dir/collector"
+sed "s#^collector=.*#collector=$test_dir/collector#" "$script_dir/launcher.sh" > "$test_dir/launcher"
+grep -Fq "collector=$test_dir/collector" "$test_dir/launcher" || fail 'launcher collector path not replaced'
 chmod 0755 "$test_dir/launcher"
 run_case 0 "$test_dir/launcher" collect --dry-run --file 'a log with spaces' --state-dir "$state"
 printf 'arg=<%s>\n' collect --dry-run --file 'a log with spaces' --state-dir "$state" > "$test_dir/expected"
