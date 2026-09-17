@@ -27,4 +27,16 @@ for target in "${targets[@]}"; do
   placeholder=$(printf '%s' "$target" | tr '[:lower:]' '[:upper:]')
   replacements+=(-e "s/@SHA256_${placeholder}@/$hash/g")
 done
-sed "${replacements[@]}" "$script_dir/$template"
+launcher="$script_dir/launcher.sh"
+[[ -f "$launcher" ]] || { printf '%s\n' 'render.sh: missing launcher.sh' >&2; exit 1; }
+# The collector template carries the launcher inside a quoted heredoc at the @LAUNCHER@ line.
+awk -v launcher="$launcher" '
+  $0 == "@LAUNCHER@" {
+    n = 0
+    while ((getline line < launcher) > 0) { print line; n++ }
+    close(launcher)
+    if (n == 0) { print "render.sh: could not read " launcher > "/dev/stderr"; exit 1 }
+    next
+  }
+  { print }
+' "$script_dir/$template" | sed "${replacements[@]}"

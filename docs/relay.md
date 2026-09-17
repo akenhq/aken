@@ -107,7 +107,7 @@ curl http://127.0.0.1:7788/healthz
 Use the same relay URL for the collector and MCP. For a local relay:
 
 ```sh
-sudo -u aken aken serve --relay http://127.0.0.1:7788
+sudo aken serve --relay http://127.0.0.1:7788
 aken-mcp join --relay http://127.0.0.1:7788
 ```
 

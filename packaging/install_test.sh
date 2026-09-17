@@ -66,9 +66,19 @@ cp "$dist/aken_linux_amd64" "$dist/aken_linux_arm64"
 bash "$script_dir/render.sh" "$dist" "$tag" install > "$dist/install.sh"
 bash "$script_dir/render.sh" "$dist" "$tag" once > "$dist/run.sh"
 bash -n "$dist/install.sh" "$dist/run.sh"
-if grep -Eq '@(VERSION|MODE|SHA256_LINUX_AMD64|SHA256_LINUX_ARM64)@' "$dist/install.sh" "$dist/run.sh"; then
+if grep -Eq '@(VERSION|MODE|LAUNCHER|SHA256_LINUX_AMD64|SHA256_LINUX_ARM64)@' "$dist/install.sh" "$dist/run.sh"; then
   fail 'unreplaced placeholder'
 fi
+# The rendered scripts and the by-hand install steps carry packaging/launcher.sh verbatim.
+embedded_launcher() {
+  awk -v start="<<'AKEN_LAUNCHER'" 'index($0, start) { inside = 1; next } $0 == "AKEN_LAUNCHER" { inside = 0 } inside' "$1"
+}
+sh -n "$script_dir/launcher.sh"
+for source in "$dist/install.sh" "$dist/run.sh" "$script_dir/../docs/install.md"; do
+  embedded_launcher "$source" > "$test_dir/launcher.embedded"
+  diff -u "$script_dir/launcher.sh" "$test_dir/launcher.embedded" || fail "launcher differs in $source"
+done
+printf '%s\n' 'ok: launcher embedded verbatim'
 mkdir -p "$test_dir/releases/$other_tag"
 cp "$dist"/aken_linux_* "$test_dir/releases/$other_tag/"
 for asset in "$test_dir/releases/$other_tag"/aken_linux_*; do
@@ -119,6 +129,19 @@ assert_line "Local copy: $state/runs/" "$test_dir/stdout"
 run_case 3 bash "$dist/run.sh" serve --exit 3
 assert_line "Local copy: $state/sessions/" "$test_dir/stdout"
 printf '%s\n' 'ok: --once, serve, and collector exit status'
+
+# Started by a non-root user, the launcher runs the collector as that user, arguments unchanged.
+# The root path, which switches to the aken user, runs in the CI container job.
+install -m 0755 "$dist/aken_linux_amd64" "$test_dir/collector"
+sed "s#^collector=.*#collector=$test_dir/collector#" "$script_dir/launcher.sh" > "$test_dir/launcher"
+grep -Fq "collector=$test_dir/collector" "$test_dir/launcher" || fail 'launcher collector path not replaced'
+chmod 0755 "$test_dir/launcher"
+run_case 0 "$test_dir/launcher" collect --dry-run --file 'a log with spaces' --state-dir "$state"
+printf 'arg=<%s>\n' collect --dry-run --file 'a log with spaces' --state-dir "$state" > "$test_dir/expected"
+grep '^arg=' "$test_dir/stdout" > "$test_dir/arguments"
+diff -u "$test_dir/expected" "$test_dir/arguments"
+run_case 3 "$test_dir/launcher" serve --state-dir "$state" --exit 3
+printf '%s\n' 'ok: launcher passes a non-root caller through'
 
 run_case 0 bash "$dist/install.sh" --help
 assert_line 'Usage: install.sh [--version vX.Y.Z] [--once] [-- ] [collector arguments]' "$test_dir/stdout"

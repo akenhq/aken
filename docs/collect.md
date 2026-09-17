@@ -20,9 +20,11 @@ scope. Results are redacted and kept in a local audit copy.
 
 ## Permissions
 
-Run the collector as the unprivileged `aken` user. It refuses root. Follow
-[Install and verify](install.md) to give that user membership in `adm` and
-`systemd-journal` where those groups exist.
+Start the collector with `sudo`. The installed `aken` command is a launcher
+that switches to the unprivileged `aken` user before the collector starts;
+the collector itself refuses root. Follow [Install and verify](install.md)
+to give that user membership in `adm` and `systemd-journal` where those
+groups exist.
 
 File sources must be under `/var/log` or a directory you add with `--allow DIR`.
 The collector reads them through `os.Root` and refuses symlinks that leave the
@@ -84,7 +86,7 @@ spaces.
 On the server, collect the last two hours from a unit and a container:
 
 ```sh
-sudo -u aken aken collect --unit nginx --container api --since 2h
+sudo aken collect --unit nginx --container api --since 2h
 ```
 
 The review screen has this layout. The numbers, window, file source, and
@@ -190,7 +192,7 @@ exits 1 with `aken: the review screen needs a terminal`.
 Collect, redact, and review without uploading:
 
 ```sh
-sudo -u aken aken collect --dry-run --unit nginx --since 1h
+sudo aken collect --dry-run --unit nginx --since 1h
 ```
 
 The first line is `aken collect --dry-run: nothing will be uploaded`. The
@@ -267,7 +269,7 @@ exceeding the artifact size limit are failures or refusals.
 where plain HTTP is allowed. Start a local relay with `aken-relay serve`, then use its default address:
 
 ```sh
-sudo -u aken aken collect --unit nginx --relay http://127.0.0.1:7788
+sudo aken collect --unit nginx --relay http://127.0.0.1:7788
 ```
 
 Use the same `--relay URL` with `aken-mcp join` on your machine. A loopback

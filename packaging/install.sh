@@ -127,7 +127,7 @@ USAGE
   if [[ "$mode" == install ]]; then
     [[ "$uid" -eq 0 ]] ||
       die 'install.sh must run as root (sudo). The collector itself never runs as root.'
-    for command in useradd usermod getent; do
+    for command in useradd usermod getent setpriv; do
       command -v "$command" >/dev/null 2>&1 || die "Required command not found: $command"
     done
   elif [[ "$uid" -eq 0 ]]; then
@@ -156,10 +156,14 @@ USAGE
   fi
 
   if [[ "$mode" == install ]]; then
-    (
-      cd "$TMP_DIR"
-      install -o root -g root -m 0755 "aken_linux_${ARCH}" /usr/local/bin/aken
-    )
+    install -d -o root -g root -m 0755 /usr/local/libexec
+    install -o root -g root -m 0755 "$TMP_DIR/aken_linux_${ARCH}" /usr/local/libexec/aken
+    # The launcher is packaging/launcher.sh, rendered in at release time. Started as root,
+    # it switches to the aken user with setpriv before it runs the collector.
+    cat > "$TMP_DIR/aken" <<'AKEN_LAUNCHER'
+@LAUNCHER@
+AKEN_LAUNCHER
+    install -o root -g root -m 0755 "$TMP_DIR/aken" /usr/local/bin/aken
     if ! getent passwd aken >/dev/null; then
       useradd --system --user-group --home-dir /var/lib/aken --create-home --shell /usr/sbin/nologin aken
     fi
@@ -172,8 +176,8 @@ USAGE
       fi
     done
     /usr/local/bin/aken version
-    printf '%s\n' 'Run the collector as the aken user, never as root:' \
-      '  sudo -u aken aken collect --help'
+    printf '%s\n' 'Run the collector with sudo. The aken command switches to the unprivileged aken user before the collector starts:' \
+      '  sudo aken collect --help'
     exit 0
   fi
 

@@ -65,7 +65,7 @@ as it appears in the journal, including a short name followed by `.`, `_`, or
 all matching names become separate sources:
 
 ```sh
-sudo -u aken aken collect --container stack_api --dry-run
+sudo aken collect --container stack_api --dry-run
 ```
 
 You can also pass a 12- or 64-character hex container ID. If no name matches,

@@ -33,16 +33,31 @@ jobs:
     if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Render this branch's scripts with the latest release's binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/akenhq/aken/releases/latest)
+          tag=${tag##*/}
+          mkdir -p dist
+          curl -fsSL "https://github.com/akenhq/aken/releases/download/$tag/SHA256SUMS" -o dist/SHA256SUMS
+          bash packaging/render.sh dist "$tag" install > dist/install.sh
+          bash packaging/render.sh dist "$tag" once > dist/run.sh
       - name: Run once, check filesystem changes, then install
         shell: bash
         run: |
           set -euo pipefail
+          mount="$PWD/dist:/dist:ro"
           prepare='apt-get update && apt-get install -y --no-install-recommends ca-certificates curl util-linux'
-          once='curl -fsSL https://github.com/akenhq/aken/releases/latest/download/run.sh | bash -s -- collect --dry-run --file /var/log/dpkg.log'
-          docker run --rm --name aken-once debian:bookworm-slim bash -euo pipefail -c "$prepare; $once"
+          # The scripts arrive through a pipe, as they do from curl.
+          once='cat /dist/run.sh | bash -s -- collect --dry-run --file /var/log/dpkg.log'
+          docker run --rm --name aken-once -v "$mount" debian:bookworm-slim bash -euo pipefail -c "$prepare; $once"
 
           trap 'docker rm -f aken-once-diff >/dev/null 2>&1 || true' EXIT
-          docker run -d --name aken-once-diff debian:bookworm-slim sleep infinity
+          docker run -d --name aken-once-diff -v "$mount" debian:bookworm-slim sleep infinity
           docker exec aken-once-diff bash -euo pipefail -c "$prepare; mkdir -p /root/.local/state"
           # Exclude dependency setup and parent directory entries from the collector's changes.
           docker diff aken-once-diff | LC_ALL=C sort > "$RUNNER_TEMP/aken-before"
@@ -60,11 +75,22 @@ jobs:
             test ! -e /root/.local/state/aken
             test "$(stat -c "%a" /root)" = 700
             test ! -e /usr/local/bin/aken
-            ! getent passwd aken
+            test ! -e /usr/local/libexec/aken
+            if getent passwd aken; then exit 1; fi
             test -z "$(find /tmp -maxdepth 1 -name "aken-once.*" -print -quit)"
           '
-          docker run --rm --name aken-install debian:bookworm-slim bash -euo pipefail -c \
-            "$prepare; curl -fsSL https://github.com/akenhq/aken/releases/latest/download/install.sh | bash; aken version"
+          # The installed launcher must switch root to the aken user; the collector itself keeps refusing root.
+          install='cat /dist/install.sh | bash
+            test -x /usr/local/libexec/aken
+            head -n 1 /usr/local/bin/aken | grep -qx "#!/bin/sh"
+            test "$(stat -c "%U:%G:%a" /var/lib/aken)" = aken:aken:700
+            aken version
+            aken collect --dry-run --file /var/log/dpkg.log < /dev/null
+            if /usr/local/libexec/aken collect --dry-run --file /var/log/dpkg.log < /dev/null; then
+              echo "the collector ran as root" >&2
+              exit 1
+            fi'
+          docker run --rm --name aken-install -v "$mount" debian:bookworm-slim bash -euo pipefail -c "$prepare; $install"
 
   secrets:
     name: Secret scan
