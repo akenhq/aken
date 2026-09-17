@@ -68,7 +68,11 @@ func TestIPs(t *testing.T) {
 			t.Fatalf("unredacted IP %q: %q", value, result.Lines)
 		}
 	}
-	for _, value := range []string{"127.0.0.1", "0.0.0.0", "::1", "localhost", "12:30:45", "aa:bb:cc:dd:ee:ff", "2026-09-12T14:39:28", "version 1.2.3", "999.999.999.999"} {
+	for _, value := range []string{
+		"127.0.0.1", "0.0.0.0", "::1", "localhost", "12:30:45", "aa:bb:cc:dd:ee:ff", "2026-09-12T14:39:28", "version 1.2.3", "999.999.999.999",
+		"MAC=00:0c:29:8b:3f:5a:00:50:56:f0:37:fb:08:00", "MD5:aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99", "1:2:3:4:5:6:7:8:9", "1:2:3:4:5:6:7::8",
+		"Net::HTTP", "ActiveRecord::Base", "2001:db8::foo",
+	} {
 		if got := e.Redact([][]byte{[]byte(value)}); string(got.Lines[0]) != value {
 			t.Fatalf("changed %q to %q", value, got.Lines)
 		}
@@ -287,6 +291,33 @@ func TestIDShapedFlags(t *testing.T) {
 			want := []Flag{{Line: 1, Value: tt.value, IDShaped: tt.id}}
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("flags = %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
+func TestIPv6Tokens(t *testing.T) {
+	for _, tt := range []struct{ input, want string }{
+		{"IN=eth0 OUT= MAC=00:0c:29:8b:3f:5a:00:50:56:f0:37:fb:08:00 SRC=203.0.113.5", "IN=eth0 OUT= MAC=00:0c:29:8b:3f:5a:00:50:56:f0:37:fb:08:00 SRC=<ip#1>"},
+		{"MAC=00:0C:29:8B:3F:5A:00:50:56:F0:37:FB:81:00:00:64:08:00", "MAC=00:0C:29:8B:3F:5A:00:50:56:F0:37:FB:81:00:00:64:08:00"},
+		{"2001:db8::1:54321", "<ip#1>:54321"},
+		{"2a01:4f8:c010:1234:5678:9abc:def0:1234:54321", "<ip#1>:54321"},
+		{"2001:db8::1:8080", "<ip#1>"},
+		{"[2001:db8::1]:8080", "[<ip#1>]:8080"},
+		{"2001:db8::/32", "<ip#1>/32"},
+		{"fe80::1%eth0", "<ip#1>%eth0"},
+		{"host:2001:db8::1", "host:<ip#1>"},
+		{"tcp6 0 0 :::8080 :::* LISTEN", "tcp6 0 0 <ip#1>:8080 <ip#1>:* LISTEN"},
+		{"[::1]:8080", "[::1]:8080"},
+		{"a::b c::d", "<ip#1> <ip#2>"},
+	} {
+		t.Run(tt.input, func(t *testing.T) {
+			e, err := Compile(defaults(t), nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := e.Redact([][]byte{[]byte(tt.input)}); string(got.Lines[0]) != tt.want {
+				t.Fatalf("lines = %q, want %q", got.Lines, tt.want)
 			}
 		})
 	}

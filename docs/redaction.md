@@ -64,7 +64,7 @@ usable credentials.
 | `basic-auth-url` | `secret` | Password in a URL (user part optional); capture group 1 | `https://user:examplepass@example.invalid/` |
 | `generic-assignment` | `secret` | Values after sensitive field names, also inside longer names such as DB_PASSWORD or accessToken; capture group 1 | `api_key=ABCDEFGHIJKLMNOP` |
 | `ipv4` | `ip` | IPv4 addresses | `203.0.113.5` |
-| `ipv6` | `ip` | Compressed and full eight-group IPv6 addresses | `2001:db8::1` |
+| `ipv6` | `ip` | Compressed and full eight-group IPv6 addresses, as whole colon-separated tokens | `2001:db8::1` |
 | `email` | `email` | Email address pattern | `user@example.invalid` |
 | `phone` | `phone` | International phone number pattern; disabled by default | `+1-202-555-0123` |
 
@@ -82,6 +82,14 @@ the value.
 The IPv6 rule covers `fe80::1ff:fe23:4567:890a`, `::1`, and the `::ffff:`
 part of `::ffff:192.0.2.1` too. It does not match times such as `12:30:45`,
 MAC addresses such as `aa:bb:cc:dd:ee:ff`, or `2026-09-12T14:39:28`.
+
+The rule claims a whole run of colon-separated hex groups, and the engine keeps
+an `ip` match only when it parses as an address. A run that is not an address
+stays unchanged, such as the fourteen-group `MAC=` field of iptables and UFW
+log lines or a key fingerprint like `MD5:aa:bb:cc:dd:ee:ff:00:11:...`. No part
+of such a run is read as an address. The `::` inside a name such as
+`Net::HTTP` is not matched either. After an unbracketed address, a five-digit
+port stays visible: `2001:db8::1:54321` becomes `<ip#1>:54321`.
 
 Private key blocks are built into the engine as category `key`. From a line
 matching `-----BEGIN [A-Z ]*PRIVATE KEY-----` through a line matching
