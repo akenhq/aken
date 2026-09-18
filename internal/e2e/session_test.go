@@ -144,6 +144,8 @@ func TestLiveSession(t *testing.T) {
 				}
 				results = append(results, text)
 				events[id] = []string{"received", "approved", "sent"}
+				// The collector counts a job after it posts the result, so the session must not end before its summary line.
+				h.out.untilPrefix(t, "14:00:00Z  "+name+"   ")
 			})
 		}
 		h.end(t, fmt.Sprintf("%d jobs, %d sent, 0 denied, 0 rejected", len(results), len(results)), "")
@@ -239,6 +241,17 @@ func sessionPipe(ctx context.Context) (*sessionOutput, *io.PipeWriter, *io.PipeR
 
 func (o *sessionOutput) until(t *testing.T, want string) string {
 	t.Helper()
+	return o.wait(t, want, func(line string) bool { return line == want })
+}
+
+// A job whose counts depend on the machine is awaited by the prefix its summary line starts with.
+func (o *sessionOutput) untilPrefix(t *testing.T, prefix string) string {
+	t.Helper()
+	return o.wait(t, prefix, func(line string) bool { return strings.HasPrefix(line, prefix) })
+}
+
+func (o *sessionOutput) wait(t *testing.T, want string, done func(string) bool) string {
+	t.Helper()
 	var chunk strings.Builder
 	for {
 		select {
@@ -251,7 +264,7 @@ func (o *sessionOutput) until(t *testing.T, want string) string {
 			}
 			o.text.WriteString(line)
 			chunk.WriteString(line)
-			if line == want {
+			if done(line) {
 				return chunk.String()
 			}
 		case <-o.ctx.Done():

@@ -130,7 +130,8 @@ Redaction is defence in depth and can miss sensitive data.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and the dependency budget in
-[DEPENDENCIES.md](DEPENDENCIES.md).
+[DEPENDENCIES.md](DEPENDENCIES.md). Maintainers publish releases as
+[RELEASING.md](RELEASING.md) describes.
 
 ## License
 

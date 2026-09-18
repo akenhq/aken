@@ -46,3 +46,8 @@ Sign off your commits under the Developer Certificate of Origin with
 
 Keep your pull request small, with one change. Run `make check` and resolve
 failures before submitting. Fill in the checklist in the pull request template.
+
+## Releases
+
+Maintainers publish releases from a version tag. See
+[RELEASING.md](RELEASING.md).
