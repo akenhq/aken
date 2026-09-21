@@ -2,7 +2,6 @@
 package screen
 
 import (
-	"bufio"
 	"bytes"
 	"strings"
 	"testing"
@@ -14,14 +13,14 @@ func TestPage(t *testing.T) {
 		lines[i] = "line"
 	}
 	var out bytes.Buffer
-	if err := Page(bufio.NewReader(strings.NewReader("\n")), &out, lines, 0); err != nil {
+	if err := Page(NewInput(strings.NewReader("\n"), -1, false), &out, lines, 0); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Count(out.String(), "-- more:") != 1 || strings.Count(out.String(), "line\n") != 41 {
 		t.Fatal("wrong default page size")
 	}
 	out.Reset()
-	if err := Page(bufio.NewReader(strings.NewReader("")), &out, lines, 1); err == nil {
+	if err := Page(NewInput(strings.NewReader(""), -1, false), &out, lines, 1); err == nil {
 		t.Fatal("expected paging input error")
 	}
 }

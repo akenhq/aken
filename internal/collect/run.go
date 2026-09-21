@@ -2,7 +2,6 @@
 package collect
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -142,7 +141,7 @@ func readSources(ctx context.Context, o Options, stderr io.Writer) ([]*source.So
 	sources = append(sources, fileSources...)
 	return sources, nil
 }
-func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writer, interactive bool, pageLines int) int {
+func Run(ctx context.Context, o Options, stdin *screen.Input, stdout, stderr io.Writer, pageLines int) int {
 	fail := func(err error) int { _, _ = fmt.Fprintf(stderr, "aken: %s\n", err); return 1 }
 	if err := validate(o); err != nil {
 		return fail(err)
@@ -225,14 +224,14 @@ func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writ
 		return fail(err)
 	}
 	screen.manifest = m
-	if !interactive {
+	if !stdin.Interactive() {
 		renderScreen(stdout, screen)
 		if o.DryRun {
 			return 0
 		}
 		return fail(errors.New("the review screen needs a terminal"))
 	}
-	choice, err := review(bufio.NewReader(stdin), stdout, screen, o.DryRun, pageLines)
+	choice, err := review(stdin, stdout, screen, o.DryRun, pageLines)
 	if err != nil {
 		return fail(err)
 	}

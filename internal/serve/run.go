@@ -2,7 +2,6 @@
 package serve
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/akenhq/aken/internal/collect"
 	"github.com/akenhq/aken/internal/redact"
+	"github.com/akenhq/aken/internal/screen"
 	"github.com/akenhq/aken/internal/source"
 	"github.com/akenhq/aken/protocol"
 )
@@ -28,14 +28,14 @@ type session struct {
 	engine                       *redact.Engine
 	audit                        *audit
 	files                        source.Files
-	stdin                        *bufio.Reader
+	stdin                        *screen.Input
 	stdout, stderr               io.Writer
 	pageLines                    int
 	nextJob, nextResult          uint64
 	jobs, sent, denied, rejected int
 }
 
-func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writer, pageLines int) int {
+func Run(ctx context.Context, o Options, stdin *screen.Input, stdout, stderr io.Writer, pageLines int) int {
 	fail := func(err error) int { _, _ = fmt.Fprintf(stderr, "aken: %s\n", err); return 1 }
 	if err := validate(o); err != nil {
 		return fail(err)
@@ -96,7 +96,7 @@ func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writ
 	defer cancelLife()
 	active, cancel := context.WithCancelCause(lifetime)
 	defer cancel(nil)
-	s := session{o: o, client: client, id: id, engine: engine, audit: a, files: source.Files{Allowed: append([]string{"/var/log"}, o.Allow...)}, stdin: bufio.NewReader(contextReader{active, stdin}), stdout: stdout, stderr: stderr, pageLines: pageLines, nextJob: 1, nextResult: 1}
+	s := session{o: o, client: client, id: id, engine: engine, audit: a, files: source.Files{Allowed: append([]string{"/var/log"}, o.Allow...)}, stdin: stdin.Until(active), stdout: stdout, stderr: stderr, pageLines: pageLines, nextJob: 1, nextResult: 1}
 	_, _ = fmt.Fprintf(stdout, "aken serve: session open on %s, level %d, expires %s\nScope    %s\nLocal    %s\nRedaction   %d rules (%d default", visible(o.RelayURL), o.Level, remote.ExpiresAt.UTC().Format(time.RFC3339), visible(strings.Join(s.files.Allowed, ", ")), visible(a.dir), defaults+extras, defaults)
 	if rulesPath != "" {
 		_, _ = fmt.Fprintf(stdout, ", %d from %s", extras, visible(rulesPath))
@@ -117,6 +117,11 @@ func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writ
 		err = s.loop(active, jobs)
 	}
 	cancel(nil)
+	if errors.Is(err, screen.ErrInterrupted) {
+		// Raw mode swallows the signal, so Ctrl-C at a prompt ends the session here.
+		_, _ = fmt.Fprintln(stdout, "Ctrl-C: ending the session.")
+		err = nil
+	}
 	code := 0
 	if ctx.Err() == nil && err != nil {
 		// The relay's clock and the local lifetime timer race at expiry; either signal means the session expired.
@@ -146,27 +151,6 @@ func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writ
 	}
 	_, _ = fmt.Fprintf(stdout, "Session ended: %d jobs, %d sent, %d denied, %d rejected. Local copy: %s\n", s.jobs, s.sent, s.denied, s.rejected, visible(a.dir))
 	return code
-}
-
-// A terminal read must not prevent expiry or a relay deletion from ending the session.
-type contextReader struct {
-	ctx    context.Context
-	reader io.Reader
-}
-
-func (r contextReader) Read(p []byte) (int, error) {
-	type readResult struct {
-		data []byte
-		err  error
-	}
-	done := make(chan readResult, 1)
-	go func() { data := make([]byte, len(p)); n, err := r.reader.Read(data); done <- readResult{data[:n], err} }()
-	select {
-	case <-r.ctx.Done():
-		return 0, context.Cause(r.ctx)
-	case result := <-done:
-		return copy(p, result.data), result.err
-	}
 }
 
 func (s *session) join(ctx context.Context, pair protocol.KeyPair, exchange [32]byte) error {

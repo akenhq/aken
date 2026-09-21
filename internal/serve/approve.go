@@ -2,7 +2,6 @@
 package serve
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -18,7 +17,10 @@ import (
 
 func visible(s string) string { return screen.Visible([]byte(s)) }
 
-func approve(stdin *bufio.Reader, stdout io.Writer, job protocol.Job, jobs []preparedJob, pageLines int) (bool, error) {
+var approvalChoices = []screen.Choice{{Key: 'a', Label: "approve"}, {Key: 'd', Label: "deny"}, {Key: 'v', Label: "view params"}}
+var flagChoices = []screen.Choice{{Key: 's', Label: "send"}, {Key: 'd', Label: "drop"}}
+
+func approve(stdin *screen.Input, stdout io.Writer, job protocol.Job, jobs []preparedJob, pageLines int) (bool, error) {
 	for {
 		title := job.Name
 		if job.Name == "plan" {
@@ -36,45 +38,41 @@ func approve(stdin *bufio.Reader, stdout io.Writer, job protocol.Job, jobs []pre
 			}
 			_, _ = fmt.Fprintln(stdout)
 		}
-		_, _ = fmt.Fprint(stdout, "\n[a] approve   [d] deny   [v] view params\n>\n")
-		for {
-			input, err := stdin.ReadString('\n')
-			if err != nil {
-				return false, err
+		_, _ = fmt.Fprintln(stdout)
+		screen.Choices(stdout, approvalChoices)
+		key, err := screen.Ask(stdin, stdout, approvalChoices)
+		if err != nil {
+			return false, err
+		}
+		switch key {
+		case 'a':
+			return true, nil
+		case 'd':
+			return false, nil
+		}
+		// The params are paged, then the screen is drawn again so the answer
+		// is given to the job description rather than to the last page.
+		var out bytes.Buffer
+		if err := json.Indent(&out, job.Params, "", "  "); err != nil {
+			return false, err
+		}
+		lines := strings.Split(out.String(), "\n")
+		for i, line := range lines {
+			lines[i] = visible(line)
+		}
+		lines = append(lines, "Resolved paths:")
+		for _, p := range jobs {
+			for _, path := range p.paths {
+				lines = append(lines, visible(path))
 			}
-			switch strings.TrimSpace(input) {
-			case "a":
-				return true, nil
-			case "d":
-				return false, nil
-			case "v":
-				var out bytes.Buffer
-				if err := json.Indent(&out, job.Params, "", "  "); err != nil {
-					return false, err
-				}
-				lines := strings.Split(out.String(), "\n")
-				for i, line := range lines {
-					lines[i] = visible(line)
-				}
-				lines = append(lines, "Resolved paths:")
-				for _, p := range jobs {
-					for _, path := range p.paths {
-						lines = append(lines, visible(path))
-					}
-				}
-				if err := screen.Page(stdin, stdout, lines, pageLines); err != nil {
-					return false, err
-				}
-			default:
-				_, _ = fmt.Fprint(stdout, ">\n")
-				continue
-			}
-			break
+		}
+		if err := screen.Page(stdin, stdout, lines, pageLines); err != nil {
+			return false, err
 		}
 	}
 }
 
-func reviewFlags(stdin *bufio.Reader, stdout io.Writer, p preparedJob, result protocol.Result, flags []redact.Flag, now time.Time) (bool, error) {
+func reviewFlags(stdin *screen.Input, stdout io.Writer, p preparedJob, result protocol.Result, flags []redact.Flag, now time.Time) (bool, error) {
 	_, _ = fmt.Fprintf(stdout, "%s  %s %s  %d lines, %d strings to inspect\n", now.UTC().Format("15:04:05Z"), p.job.Name, visible(p.target), len(result.Lines), result.Redaction.Flags)
 	seen := map[int]bool{}
 	for _, flag := range flags {
@@ -92,18 +90,10 @@ func reviewFlags(stdin *bufio.Reader, stdout io.Writer, p preparedJob, result pr
 		}
 		_, _ = fmt.Fprintf(stdout, "  %s ! %s\n", visible(location), visible(line))
 	}
-	_, _ = fmt.Fprint(stdout, "[s] send   [d] drop\n>\n")
-	for {
-		input, err := stdin.ReadString('\n')
-		if err != nil {
-			return false, err
-		}
-		switch strings.TrimSpace(input) {
-		case "s":
-			return true, nil
-		case "d":
-			return false, nil
-		}
-		_, _ = fmt.Fprint(stdout, ">\n")
+	screen.Choices(stdout, flagChoices)
+	key, err := screen.Ask(stdin, stdout, flagChoices)
+	if err != nil {
+		return false, err
 	}
+	return key == 's', nil
 }

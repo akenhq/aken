@@ -47,7 +47,7 @@ func TestRunDecisions(t *testing.T) {
 			o := testOptions(t, "from 203.0.113.5\n")
 			o.DryRun = tt.dry
 			var stdout, stderr bytes.Buffer
-			code := Run(context.Background(), o, strings.NewReader(tt.input), &stdout, &stderr, tt.interactive, 40)
+			code := Run(context.Background(), o, screen.NewInput(strings.NewReader(tt.input), -1, tt.interactive), &stdout, &stderr, 40)
 			if code != tt.code || !strings.Contains(stderr.String(), tt.want) {
 				t.Fatalf("code %d, stderr %s", code, stderr.String())
 			}
@@ -90,7 +90,7 @@ func TestRunValidation(t *testing.T) {
 			o.DryRun = true
 			tt.change(&o)
 			var out, errs bytes.Buffer
-			if code := Run(context.Background(), o, strings.NewReader(""), &out, &errs, false, 40); code != 1 || !strings.Contains(errs.String(), tt.message) {
+			if code := Run(context.Background(), o, screen.NewInput(strings.NewReader(""), -1, false), &out, &errs, 40); code != 1 || !strings.Contains(errs.String(), tt.message) {
 				t.Fatalf("code %d, error %s", code, errs.String())
 			}
 		})
@@ -119,7 +119,7 @@ func TestUploadRoundTrip(t *testing.T) {
 			if !large {
 				input = "v\ns\n"
 			}
-			if code := Run(context.Background(), o, strings.NewReader(input), &out, &errs, true, 40); code != 0 {
+			if code := Run(context.Background(), o, screen.NewInput(strings.NewReader(input), -1, true), &out, &errs, 40); code != 0 {
 				t.Fatalf("code %d: %s", code, errs.String())
 			}
 			encoded := regexp.MustCompile(`akn1_[a-z2-7]{52}`).FindString(out.String())
@@ -285,7 +285,7 @@ func TestUploadFailures(t *testing.T) {
 				o.Retention = 0
 			}
 			var out, errs bytes.Buffer
-			if code := Run(context.Background(), o, strings.NewReader("s\n"), &out, &errs, true, 40); code != 1 {
+			if code := Run(context.Background(), o, screen.NewInput(strings.NewReader("s\n"), -1, true), &out, &errs, 40); code != 1 {
 				t.Fatalf("code = %d", code)
 			}
 			if strings.Contains(out.String(), "akn1_") {
@@ -320,7 +320,7 @@ func TestPruneAndDryRun(t *testing.T) {
 				input = "q\n"
 				want = 0
 			}
-			if code := Run(context.Background(), o, strings.NewReader(input), &out, &errs, true, 40); code != want {
+			if code := Run(context.Background(), o, screen.NewInput(strings.NewReader(input), -1, true), &out, &errs, 40); code != want {
 				t.Fatal(code, errs.String())
 			}
 			entries, err := os.ReadDir(runs)
@@ -375,7 +375,7 @@ func TestCustomRulesAndDistinctFlags(t *testing.T) {
 	}
 	o.Files = append(o.Files, other)
 	var out, errs bytes.Buffer
-	if code := Run(context.Background(), o, strings.NewReader("v\nq\n"), &out, &errs, true, 40); code != 0 {
+	if code := Run(context.Background(), o, screen.NewInput(strings.NewReader("v\nq\n"), -1, true), &out, &errs, 40); code != 0 {
 		t.Fatal(code, errs.String())
 	}
 	for _, want := range []string{"15 rules (14 default, 1 from " + o.RulesFile + ")", "<name#1> 203.0.113.5", "Flags   1 string to inspect", "lines 1, 2"} {
@@ -389,7 +389,7 @@ func TestCustomRulesAndDistinctFlags(t *testing.T) {
 	o.Files = []string{"/outside/allowed/scope"}
 	out.Reset()
 	errs.Reset()
-	if code := Run(context.Background(), o, strings.NewReader(""), &out, &errs, false, 40); code != 1 || errs.String() != "aken: invalid rules JSON\n" {
+	if code := Run(context.Background(), o, screen.NewInput(strings.NewReader(""), -1, false), &out, &errs, 40); code != 1 || errs.String() != "aken: invalid rules JSON\n" {
 		t.Fatal(code, errs.String())
 	}
 }
