@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,16 +56,19 @@ func decode(params json.RawMessage, into any) error {
 	return nil
 }
 
-// scopeError marks a path the session may not read yet. It carries the directory
-// the operator would have to allow, so level 1 can offer that on the approval
-// screen instead of refusing the job outright.
+// scopeError marks a path the session may not read yet. It names the allowed
+// directories so the agent can stay inside them and the human knows which flag
+// widens them; the directories are the scope itself, so naming them discloses
+// nothing new. It also carries the directory the operator would have to allow,
+// so level 1 can offer that on the approval screen instead of refusing the job
+// outright.
 type scopeError struct {
 	dir   string
 	scope []string
 }
 
 func (e *scopeError) Error() string {
-	return "outside the session scope (" + strings.Join(e.scope, ", ") + ")"
+	return "outside the scope (" + strings.Join(e.scope, ", ") + ")"
 }
 
 func outsideScope(files source.Files, path string, isDir bool) error {
@@ -134,7 +138,7 @@ func resolve(files source.Files, path string, isDir bool) (string, error) {
 	}
 	file, err := files.Open(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", errors.New("path cannot be opened inside the scope")
+		return "", failed("path cannot be opened inside the scope", err)
 	}
 	if file != nil {
 		_ = file.Close()
@@ -160,9 +164,25 @@ func resolve(files source.Files, path string, isDir bool) (string, error) {
 	// A path inside the scope that resolves outside it is a link escaping the scope,
 	// never a directory the operator is invited to add.
 	if !files.Permits(canonical) {
-		return "", errors.New("path resolves outside the session scope through a link")
+		return "", errors.New("path resolves outside the scope through a link")
 	}
 	return canonical, nil
+}
+
+// failed keeps an approved job's error useful without echoing paths: an *fs.PathError is reduced to its
+// cause, and every other error from package source or the OS is fixed text.
+func failed(what string, err error) error {
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) {
+		err = pathErr.Err
+	}
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("%s: no such file", what)
+	case errors.Is(err, fs.ErrPermission):
+		return fmt.Errorf("%s: permission denied for the user running aken serve", what)
+	}
+	return fmt.Errorf("%s: %s", what, err)
 }
 
 func sensitive(path string) bool {
@@ -245,6 +265,7 @@ func prepare(ctx context.Context, job protocol.Job, class uint8, files source.Fi
 	case "read_file":
 		err = decode(job.Params, &p.read)
 		q := &p.read
+		p.target = q.Path
 		if q.From == 0 {
 			q.From = 1
 		}
@@ -254,23 +275,23 @@ func prepare(ctx context.Context, job protocol.Job, class uint8, files source.Fi
 		if q.From < 1 || q.To < q.From || q.To-q.From >= 500 {
 			return p, errors.New("invalid line range")
 		}
-		p.target = q.Path
 		p.description = fmt.Sprintf("lines %d-%d", q.From, q.To)
 	case "tail":
 		err = decode(job.Params, &p.tail)
+		p.target = p.tail.Path
 		if p.tail.N == 0 {
 			p.tail.N = 100
 		}
 		if p.tail.N < 1 || p.tail.N > 500 {
 			return p, errors.New("invalid tail count")
 		}
-		p.target = p.tail.Path
 		p.description = fmt.Sprintf("last %d lines", p.tail.N)
 	case "search":
 		if err = decode(job.Params, &p.search); err != nil {
 			return p, err
 		}
 		q := &p.search
+		p.target = q.Glob
 		if q.Max == 0 {
 			q.Max = 50
 		}
@@ -287,9 +308,8 @@ func prepare(ctx context.Context, job protocol.Job, class uint8, files source.Fi
 				return p, errors.New("invalid since")
 			}
 		}
-		// The glob and its regex describe the row even when expansion fails, so a refusal
-		// and the approval screen can name what was asked for.
-		p.target = q.Glob
+		// The regex describes the row even when expansion fails, so a refusal and the
+		// approval screen can name what was asked for alongside the glob.
 		p.description = "regex " + q.Regex
 		p.paths, err = expand(files, q.Glob, since)
 		if err != nil {
@@ -347,12 +367,12 @@ func prepare(ctx context.Context, job protocol.Job, class uint8, files source.Fi
 	if job.Name == "read_file" || job.Name == "tail" || job.Name == "list_dir" {
 		// The requested path stays in target when resolution fails, so a refusal can name it.
 		p.sensitive = sensitive(p.target)
-		canonical, resolveErr := resolve(files, p.target, job.Name == "list_dir")
-		if resolveErr != nil {
-			return p, resolveErr
+		target, err := resolve(files, p.target, job.Name == "list_dir")
+		if err != nil {
+			return p, err
 		}
-		p.target = canonical
-		p.paths = []string{p.target}
+		p.target = target
+		p.paths = []string{target}
 	}
 	for _, path := range p.paths {
 		p.sensitive = p.sensitive || sensitive(path)
@@ -452,7 +472,7 @@ func execute(ctx context.Context, p preparedJob, files source.Files) ([]string, 
 func listDir(files source.Files, path string) ([]string, string, error) {
 	entries, err := files.List(path)
 	if err != nil {
-		return nil, "", errors.New("cannot list directory")
+		return nil, "", failed("cannot list directory", err)
 	}
 	var lines []string
 	for _, e := range entries[:min(500, len(entries))] {
@@ -467,7 +487,7 @@ func listDir(files source.Files, path string) ([]string, string, error) {
 func readFile(files source.Files, p preparedJob) ([]string, string, error) {
 	data, total, err := files.ReadLines(p.target, p.read.From, p.read.To)
 	if err != nil {
-		return nil, "", errors.New("cannot read file")
+		return nil, "", failed("cannot read file", err)
 	}
 	var lines []string
 	for i, line := range data {
@@ -483,23 +503,18 @@ func search(files source.Files, p preparedJob) ([]string, string, error) {
 	q := p.search
 	result, err := files.Search(q.Regex, source.SearchQuery{Paths: p.paths, Before: q.Before, After: q.After, Max: q.Max, Cursor: q.Cursor})
 	if err != nil {
-		return nil, "", errors.New("cannot search files")
+		return nil, "", failed("cannot search files", err)
 	}
 	return result.Lines, result.Next, nil
 }
 func tail(files source.Files, p preparedJob) ([]string, string, error) {
-	files.Tail = p.tail.N
-	s, err := files.ReadFile(p.target)
+	data, total, err := files.TailLines(p.target, p.tail.N)
 	if err != nil {
-		return nil, "", errors.New("cannot read file")
-	}
-	_, total, err := files.ReadLines(p.target, 1, 1)
-	if err != nil {
-		return nil, "", errors.New("cannot count file lines")
+		return nil, "", failed("cannot read file", err)
 	}
 	var lines []string
-	for i, line := range s.Lines {
-		lines = append(lines, fmt.Sprintf("%d: %s", max(1, total-len(s.Lines)+1)+i, line))
+	for i, line := range data {
+		lines = append(lines, fmt.Sprintf("%d: %s", total-len(data)+1+i, line))
 	}
 	return lines, "", nil
 }

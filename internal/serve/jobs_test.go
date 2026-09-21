@@ -175,6 +175,45 @@ func TestFileJobs(t *testing.T) {
 	}
 }
 
+func TestFileJobErrors(t *testing.T) {
+	dir := t.TempDir()
+	files := source.Files{Allowed: []string{dir}}
+	missing := filepath.Join(dir, "missing.log")
+	for _, tt := range []struct {
+		name   string
+		params any
+		want   string
+	}{
+		{"tail", protocol.TailParams{Path: missing}, "cannot read file: no such file"},
+		{"read_file", protocol.ReadFileParams{Path: missing}, "cannot read file: no such file"},
+		{"list_dir", protocol.ListDirParams{Path: missing}, "cannot list directory: no such file"},
+		{"tail", protocol.TailParams{Path: dir}, "cannot read file: source is not a regular file"},
+	} {
+		p, err := prepare(context.Background(), job("j1", tt.name, tt.params), 1, files, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := execute(context.Background(), p, files); err == nil || err.Error() != tt.want {
+			t.Fatalf("%s: %v, want %q", tt.name, err, tt.want)
+		}
+	}
+	// prepare names the scope; the remedy that fits the level is added by the session.
+	outside := filepath.Join(t.TempDir(), "outside.log")
+	want := "outside the scope (" + dir + ")"
+	for _, tt := range []struct {
+		name   string
+		params any
+	}{
+		{"tail", protocol.TailParams{Path: outside}},
+		{"search", protocol.SearchParams{Glob: outside, Regex: "."}},
+	} {
+		p, err := prepare(context.Background(), job("j1", tt.name, tt.params), 1, files, time.Now())
+		if err == nil || err.Error() != want || p.target != outside {
+			t.Fatalf("%s: %v, target %q", tt.name, err, p.target)
+		}
+	}
+}
+
 func TestCommandHelper(t *testing.T) {
 	for i, arg := range os.Args {
 		if arg == "--serve-command-helper" {
@@ -376,7 +415,7 @@ func TestScopeRefusal(t *testing.T) {
 			if !errors.As(err, &scoped) || scoped.dir != tt.dir {
 				t.Fatalf("error = %v, want the scope refusal for %s", err, tt.dir)
 			}
-			if err.Error() != "outside the session scope ("+dir+")" {
+			if err.Error() != "outside the scope ("+dir+")" {
 				t.Fatalf("message = %q", err)
 			}
 			// The row keeps the requested path so the approval screen can name it.

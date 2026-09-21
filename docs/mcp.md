@@ -204,7 +204,7 @@ Live tools submit catalog jobs to the collector. At level 1, approve each job
 or plan in the server terminal. Level 0 preapproves catalog v1 jobs within the
 path scope. See [Live sessions](serve.md#levels) for result review at each level.
 
-A path outside the session scope is not a dead end at level 1: the approval
+A path outside the scope is not a dead end at level 1: the approval
 screen offers its directory for the session, or the path alone for that one
 job, and the person at the terminal decides. See
 [Paths outside the scope](serve.md#paths-outside-the-scope).

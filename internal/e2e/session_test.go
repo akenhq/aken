@@ -69,7 +69,7 @@ func TestLiveSession(t *testing.T) {
 		writeSessionFile(t, outside, "request from 203.0.113.7\n")
 		scope := "/var/log, " + h.options.Allow[0]
 		missing := filepath.Join(outsideDir, "gone", "outside.log")
-		refusal := "outside the session scope (" + scope + "); it cannot be added to the scope: the directory does not exist"
+		refusal := "outside the scope (" + scope + "); it cannot be added to the scope: the directory does not exist"
 		checkLiveResult(t, h.call(t, cs, "read_file", map[string]any{"path": missing})(), "rejected: "+refusal+"\n", liveMeta("j3", "rejected", 0, 0, 0, "", refusal))
 		noApproval(t, h.out.until(t, "14:00:00Z  read_file "+missing+"  rejected: "+refusal+"\n"))
 
@@ -170,8 +170,15 @@ func TestLiveSession(t *testing.T) {
 		flagged := "2: " + flaggedValue + "\n"
 		checkLiveResult(t, h.call(t, cs, "tail_file", map[string]any{"path": h.flagPath, "n": 1})(), flagged, liveMeta("j2", "ok", 1, 0, 1, "", ""))
 		h.out.until(t, "14:00:00Z  tail "+h.flagPath+"  1 lines sent, 0 redacted, 1 flags\n")
-		results := []string{read, flagged}
-		events := map[string][]string{"j1": {"received", "approved", "sent"}, "j2": {"received", "approved", "sent"}}
+
+		t.Log("13. Reject an outside-scope file: level 0 has no screen to widen the scope on")
+		outside := filepath.Join(t.TempDir(), "outside.log")
+		writeSessionFile(t, outside, "must never be sent\n")
+		refusal := "outside the scope (/var/log, " + h.options.Allow[0] + "); restart aken serve with --allow DIR to widen it"
+		checkLiveResult(t, h.call(t, cs, "read_file", map[string]any{"path": outside})(), "rejected: "+refusal+"\n", liveMeta("j3", "rejected", 0, 0, 0, "", refusal))
+		h.out.until(t, "14:00:00Z  read_file "+outside+"  rejected: "+refusal+"\n")
+		results := []string{read, flagged, ""}
+		events := map[string][]string{"j1": {"received", "approved", "sent"}, "j2": {"received", "approved", "sent"}, "j3": {"received", "rejected", "sent"}}
 		for _, name := range []string{"df", "ps"} {
 			t.Run(name, func(t *testing.T) {
 				if _, err := source.BinaryPath(name); err != nil {
@@ -197,7 +204,7 @@ func TestLiveSession(t *testing.T) {
 				h.out.untilPrefix(t, "14:00:00Z  "+name+"   ")
 			})
 		}
-		h.end(t, fmt.Sprintf("%d jobs, %d sent, 0 denied, 0 rejected", len(results), len(results)), "")
+		h.end(t, fmt.Sprintf("%d jobs, %d sent, 0 denied, 1 rejected", len(results), len(results)-1), "")
 		noApproval(t, h.out.text.String())
 		h.checkAudit(t, results, events)
 	})

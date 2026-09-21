@@ -3,8 +3,10 @@ package source
 
 import (
 	"bytes"
+	"compress/gzip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -199,6 +201,28 @@ func TestSearchPages(t *testing.T) {
 			t.Fatalf("page %q: %+v, %v", tt.cursor, r, err)
 		}
 	}
+	c := filepath.Join(dir, "c")
+	if err := os.WriteFile(c, []byte("x1\nx2\nhit\nhit\nx5\nx6\nx7\nhit\nx9\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		before, after, max int
+		cursor, next       string
+		want               []string
+	}{
+		{2, 2, 3, "", "", []string{"1- x1", "2- x2", "3: hit", "4: hit", "5- x5", "6- x6", "7- x7", "8: hit", "9- x9"}},
+		{1, 1, 1, "", "0:4", []string{"2- x2", "3: hit", "4: hit"}},
+		{1, 1, 1, "0:4", "0:8", []string{"3: hit", "4: hit", "5- x5"}},
+		{0, 0, 5, "0:5", "", []string{"8: hit"}},
+	} {
+		r, err := files.Search("hit", SearchQuery{Paths: []string{c}, Before: tt.before, After: tt.after, Max: tt.max, Cursor: tt.cursor})
+		for i := range tt.want {
+			tt.want[i] = c + ":" + tt.want[i]
+		}
+		if err != nil || r.Next != tt.next || !slices.Equal(r.Lines, tt.want) {
+			t.Fatalf("context %+v: %q, %q, %v", tt, r.Lines, r.Next, err)
+		}
+	}
 	for _, cursor := range []string{"bad", "-1:1", "0:0", "2:1", "0:99999999999999999999999"} {
 		q.Cursor = cursor
 		if _, err := files.Search("hit", q); err == nil {
@@ -249,5 +273,54 @@ func TestGrantedPaths(t *testing.T) {
 	root := Files{Paths: []string{"/"}}
 	if _, err := root.Open("/"); err == nil {
 		t.Fatal("opened the filesystem root as a granted name")
+	}
+}
+
+func TestGzip(t *testing.T) {
+	dir := t.TempDir()
+	var buf bytes.Buffer
+	// Two gzip members, as appending to a rotated log produces; readers must see both.
+	for _, part := range []string{"one\ntwo\n", "three\nfour\n"} {
+		w := gzip.NewWriter(&buf)
+		if _, err := w.Write([]byte(part)); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(dir, "error.log.2.gz")
+	truncated := filepath.Join(dir, "cut.gz")
+	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(truncated, buf.Bytes()[:buf.Len()/2], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	files := Files{Allowed: []string{dir}}
+	lines, total, err := files.ReadLines(path, 2, 3)
+	if err != nil || total != 4 || string(bytes.Join(lines, []byte{'\n'})) != "two\nthree" {
+		t.Fatalf("ReadLines: %q, %d, %v", lines, total, err)
+	}
+	lines, total, err = files.TailLines(path, 2)
+	if err != nil || total != 4 || string(bytes.Join(lines, []byte{'\n'})) != "three\nfour" {
+		t.Fatalf("TailLines: %q, %d, %v", lines, total, err)
+	}
+	r, err := files.Search("^t", SearchQuery{Paths: []string{path}, Max: 5})
+	if err != nil || !slices.Equal(r.Lines, []string{path + ":2: two", path + ":3: three"}) {
+		t.Fatalf("Search: %q, %v", r.Lines, err)
+	}
+	for _, tail := range []int{0, 3} {
+		s, err := Files{Allowed: []string{dir}, Tail: tail}.ReadFile(path)
+		want := map[int]string{0: "one\ntwo\nthree\nfour", 3: "two\nthree\nfour"}[tail]
+		if err != nil || string(bytes.Join(s.Lines, []byte{'\n'})) != want {
+			t.Fatalf("ReadFile tail %d: %v", tail, err)
+		}
+	}
+	if _, _, err := files.TailLines(truncated, 2); err == nil || err.Error() != "gzip file is truncated or corrupt" {
+		t.Fatalf("truncated: %v", err)
+	}
+	if _, err := files.ReadFile(truncated); err == nil || err.Error() != "gzip file is truncated or corrupt" {
+		t.Fatalf("truncated ReadFile: %v", err)
 	}
 }

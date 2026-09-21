@@ -288,7 +288,7 @@ func (s *session) handle(ctx context.Context, envelope protocol.Envelope, data [
 			// Level 0 has no approval screen, so its scope stays what the operator set on the
 			// command line. Level 1 offers the directory with the rest of the job.
 			if s.o.Level == 0 {
-				validation[i] = fmt.Errorf("%w; restart aken serve with --allow DIR to add a directory", scoped)
+				validation[i] = fmt.Errorf("%w; restart aken serve with --allow DIR to widen it", scoped)
 				continue
 			}
 			dirs, grantErr := scopeGrant(scoped.dir)

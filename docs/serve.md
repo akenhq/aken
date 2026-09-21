@@ -223,7 +223,7 @@ At level 0 there is no approval screen, so a path outside the scope is
 rejected with the scope and the `--allow` remedy:
 
 ```text
-14:02:07Z  read_file /etc/shadow  rejected: outside the session scope (/var/log); restart aken serve with --allow DIR to add a directory
+14:02:07Z  read_file /etc/shadow  rejected: outside the scope (/var/log); restart aken serve with --allow DIR to widen it
 ```
 
 ## Results
@@ -257,7 +257,16 @@ Denied and rejected results have a summary with the reason, for example:
 
 ```text
 14:02:07Z  read_file /etc/shadow  denied: denied by user; nothing was added to the scope
+14:02:08Z  read_file /etc/shadow  rejected: outside the scope (/var/log); restart aken serve with --allow DIR to widen it
+14:02:09Z  tail /var/log/app/app.log  error: cannot read file: permission denied for the user running aken serve
 ```
+
+The first two lines are the same read refused at level 1, where the approval
+screen offered the scope and you declined, and at level 0, where there is no
+screen to offer it on. See [Paths outside the scope](#paths-outside-the-scope).
+
+Errors give the cause, such as a missing file, a permission problem, or a
+non-regular file. They do not repeat the path or any file content.
 
 | Status | Meaning |
 |---|---|
@@ -296,6 +305,11 @@ their MCP tool names. Use catalog names inside a `plan`.
 | `systemctl_status` | `unit` | `systemctl status --no-pager --lines=0 <unit>` | Command output; exit status 0..4 is `ok`, higher is `error` |
 | `ps` | `{}` | `ps -eo pid,ppid,user,%cpu,%mem,rss,etimes,args --sort=-%cpu` | Command output, at most 500 lines |
 | `df` | `{}` | `df -hP` | Command output |
+
+`read_file`, `search`, and `tail` read gzip files, such as rotated
+`error.log.2.gz`, as their decompressed text. Line numbers count lines of that
+text. They stream the file, so any file size works; one line can be at most
+128 MiB.
 
 For `journal` and `docker_logs`, `regex` selects matching lines. `max` is
 1..500 lines per result, default 200. `tail` selects the last 1..500 lines of
