@@ -73,41 +73,62 @@ func TestLiveSession(t *testing.T) {
 		checkLiveResult(t, h.call(t, cs, "read_file", map[string]any{"path": missing})(), "rejected: "+refusal+"\n", liveMeta("j3", "rejected", 0, 0, 0, "", refusal))
 		noApproval(t, h.out.until(t, "14:00:00Z  read_file "+missing+"  rejected: "+refusal+"\n"))
 
+		sibling := filepath.Join(outsideDir, "sibling.log")
+		writeSessionFile(t, sibling, "sibling request from 203.0.113.7\n")
+		widening := func(id, path string) string {
+			return "Job " + id + " from the agent: read_file\n\n  1  read_file + " + path + "  lines 1-1\n" +
+				"\nOutside the scope (" + scope + "). Approving adds these directories\nto the scope until the session ends:\n\n" +
+				"  row 1  " + outsideDir + "\n" +
+				"\nAllowing once adds only these paths, and only for this job:\n\n" +
+				"  row 1  " + path + "\n" +
+				"\n[a] approve   [o] allow once   [d] deny   [v] view params\n>\n"
+		}
+
 		t.Log("5. Decline to add an outside-scope directory on the approval screen")
-		widening := "Job %s from the agent: read_file\n\n  1  read_file + " + outside + "  lines 1-1\n" +
-			"\nOutside the scope (" + scope + "). Approving adds these directories\nto the scope until the session ends:\n\n" +
-			"  row 1  " + outsideDir + "\n" + approvalFooter
 		await = h.call(t, cs, "read_file", map[string]any{"path": outside, "from": 1, "to": 1})
-		h.answer(t, fmt.Sprintf(widening, "j4"), "d")
-		refused := "denied by user; the directory was not added to the scope"
+		h.answer(t, widening("j4", outside), "d")
+		refused := "denied by user; nothing was added to the scope"
 		checkLiveResult(t, await(), "denied: "+refused+"\n", liveMeta("j4", "denied", 0, 0, 0, "", refused))
 		h.out.until(t, "14:00:00Z  read_file "+outside+"  denied: "+refused+"\n")
 		if _, err := os.Stat(filepath.Join(h.auditPath, "results", "5.txt")); err != nil {
 			t.Fatal("the declined read has no audit copy", err)
 		}
 
-		t.Log("6. Add the directory on the approval screen and read the file under the widened scope")
+		t.Log("6. Allow one path for one job and read it")
 		await = h.call(t, cs, "read_file", map[string]any{"path": outside, "from": 1, "to": 1})
-		h.answer(t, fmt.Sprintf(widening, "j5"), "a")
-		h.scope = append(h.scope, outsideDir)
+		h.answer(t, widening("j5", outside), "o")
 		checkLiveResult(t, await(), "1: request from <ip#1>\n", liveMeta("j5", "ok", 1, 1, 0, "", ""))
-		h.out.until(t, "14:00:00Z  scope    "+outsideDir+" added for this session\n")
+		h.out.until(t, "14:00:00Z  scope    "+outside+" added for this job\n")
 		h.out.until(t, "14:00:00Z  read_file "+outside+"  1 lines sent, 1 redacted (ip 1 values), 0 flags\n")
 
-		t.Log("7. Approve tail_file, inspect the flagged string, and drop the result")
+		t.Log("7. The one-job grant is gone, so a neighbour still asks; add the directory instead")
+		await = h.call(t, cs, "read_file", map[string]any{"path": sibling, "from": 1, "to": 1})
+		h.answer(t, widening("j6", sibling), "a")
+		h.scope = append(h.scope, outsideDir)
+		checkLiveResult(t, await(), "1: sibling request from <ip#1>\n", liveMeta("j6", "ok", 1, 1, 0, "", ""))
+		h.out.until(t, "14:00:00Z  scope    "+outsideDir+" added for this session\n")
+		h.out.until(t, "14:00:00Z  read_file "+sibling+"  1 lines sent, 1 redacted (ip 1 values), 0 flags\n")
+
+		t.Log("8. The session scope now covers the directory, so the first path asks nothing")
+		await = h.call(t, cs, "read_file", map[string]any{"path": outside, "from": 1, "to": 1})
+		h.answer(t, "Job j7 from the agent: read_file\n\n  1  read_file   "+outside+"  lines 1-1\n"+approvalFooter, "a")
+		checkLiveResult(t, await(), "1: request from <ip#1>\n", liveMeta("j7", "ok", 1, 1, 0, "", ""))
+		h.out.until(t, "14:00:00Z  read_file "+outside+"  1 lines sent, 1 redacted (ip 1 values), 0 flags\n")
+
+		t.Log("9. Approve tail_file, inspect the flagged string, and drop the result")
 		await = h.call(t, cs, "tail_file", map[string]any{"path": h.flagPath, "n": 1})
-		h.answer(t, "Job j6 from the agent: tail\n\n  1  tail        "+h.flagPath+"  last 1 lines\n"+approvalFooter, "a")
+		h.answer(t, "Job j8 from the agent: tail\n\n  1  tail        "+h.flagPath+"  last 1 lines\n"+approvalFooter, "a")
 		h.answer(t, "14:00:00Z  tail "+h.flagPath+"  1 lines, 1 strings to inspect\n  flagged.log:2 ! "+flaggedValue+"\n[s] send   [d] drop\n>\n", "d")
-		checkLiveResult(t, await(), "denied: dropped after review\n", liveMeta("j6", "denied", 0, 0, 0, "", "dropped after review"))
+		checkLiveResult(t, await(), "denied: dropped after review\n", liveMeta("j8", "denied", 0, 0, 0, "", "dropped after review"))
 		h.out.until(t, "14:00:00Z  tail "+h.flagPath+"  denied: dropped after review\n")
 
-		t.Log("8. Page search_files across two results with stable placeholders")
+		t.Log("10. Page search_files across two results with stable placeholders")
 		var pages []string
 		cursor := ""
 		for i, line := range []int{1, 3} {
 			args := map[string]any{"glob": h.path, "regex": "request from", "max": 1, "cursor": cursor}
 			await = h.call(t, cs, "search_files", args)
-			h.answer(t, fmt.Sprintf("Job j%d from the agent: search\n\n  1  search      %s  regex request from  1 files; first: %s\n", i+7, h.path, h.path)+approvalFooter, "a")
+			h.answer(t, fmt.Sprintf("Job j%d from the agent: search\n\n  1  search      %s  regex request from  1 files; first: %s\n", i+9, h.path, h.path)+approvalFooter, "a")
 			got := await()
 			meta := liveMetadata(t, got.Content[1])
 			next, ok := meta["next"].(string)
@@ -115,31 +136,33 @@ func TestLiveSession(t *testing.T) {
 				t.Fatalf("page %d next = %v", i+1, meta["next"])
 			}
 			pages = append(pages, fmt.Sprintf("%s:%d: request from <ip#1>\n", h.path, line))
-			checkLiveResult(t, got, pages[i], liveMeta(fmt.Sprintf("j%d", i+7), "ok", 1, 1, 0, next, ""))
+			checkLiveResult(t, got, pages[i], liveMeta(fmt.Sprintf("j%d", i+9), "ok", 1, 1, 0, next, ""))
 			cursor = next
 			h.out.until(t, "14:00:00Z  search "+h.path+"  1 lines sent, 1 redacted (ip 1 values), 0 flags\n")
 		}
 		stored, err := session.Load(h.sessionPath)
-		if err != nil || stored.NextJobSeq != 9 || stored.NextResultSeq != 11 {
+		if err != nil || stored.NextJobSeq != 11 || stored.NextResultSeq != 13 {
 			t.Fatalf("persisted counters: job=%d result=%d err=%v", stored.NextJobSeq, stored.NextResultSeq, err)
 		}
 
-		t.Log("9. End through DeleteSession and check the audit copy and summary")
-		h.end(t, "10 jobs, 4 sent, 5 denied, 1 rejected", "")
-		if strings.Count(h.out.text.String(), "\n>\n") != 8 {
+		t.Log("11. End through DeleteSession and check the audit copy and summary")
+		h.end(t, "12 jobs, 6 sent, 5 denied, 1 rejected", "")
+		if strings.Count(h.out.text.String(), "\n>\n") != 10 {
 			t.Fatal("unexpected number of approval and review prompts")
 		}
-		h.checkAudit(t, []string{read, "", "", "", "", "", "1: request from <ip#1>\n", "", pages[0], pages[1]}, map[string][]string{
+		one, both := "1: request from <ip#1>\n", "1: sibling request from <ip#1>\n"
+		h.checkAudit(t, []string{read, "", "", "", "", "", one, both, one, "", pages[0], pages[1]}, map[string][]string{
 			"j1":   {"received", "approved", "sent"},
 			"j2.1": {"received", "denied", "sent"}, "j2.2": {"received", "denied", "sent"}, "j2.3": {"received", "denied", "sent"},
 			"j3": {"received", "rejected", "sent"}, "j4": {"received", "denied", "sent"},
-			"j5": {"received", "scope-added", "approved", "sent"}, "j6": {"received", "approved", "dropped", "sent"},
-			"j7": {"received", "approved", "sent"}, "j8": {"received", "approved", "sent"},
+			"j5": {"received", "scope-added-once", "approved", "sent"}, "j6": {"received", "scope-added", "approved", "sent"},
+			"j7": {"received", "approved", "sent"}, "j8": {"received", "approved", "dropped", "sent"},
+			"j9": {"received", "approved", "sent"}, "j10": {"received", "approved", "sent"},
 		})
 	})
 
 	t.Run("level 0", func(t *testing.T) {
-		t.Log("10. Run file jobs and available df and ps tools without prompts")
+		t.Log("12. Run file jobs and available df and ps tools without prompts")
 		h := newLiveSession(t, 0)
 		cs := connect(t, &akenmcp.Server{SessionPath: h.sessionPath, Version: "test", Now: h.options.Now})
 		read := "1: request from <ip#1>\n2: request completed\n3: request from <ip#1>\n"

@@ -20,9 +20,23 @@ import (
 const maxFileBytes = 128 << 20
 
 type Files struct {
-	Allowed       []string
-	Tail          int
-	ModifiedAfter time.Time
+	// Allowed lists directories every path under them may be read from. Paths lists
+	// single names granted on their own; a name in Paths covers that one name and
+	// nothing under it.
+	Allowed, Paths []string
+	Tail           int
+	ModifiedAfter  time.Time
+}
+
+func under(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// Permits reports whether the scope covers path, either through an allowed
+// directory or as a granted single name.
+func (f Files) Permits(path string) bool {
+	return slices.Contains(f.Paths, path) || slices.ContainsFunc(f.Allowed, func(dir string) bool { return under(dir, path) })
 }
 
 func (f Files) Open(path string) (*os.File, error) {
@@ -30,18 +44,30 @@ func (f Files) Open(path string) (*os.File, error) {
 		return nil, errors.New("file path must be absolute and clean")
 	}
 	for _, dir := range f.Allowed {
-		rel, err := filepath.Rel(dir, path)
-		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			root, err := os.OpenRoot(dir)
-			if err != nil {
-				return nil, err
-			}
-			defer func() { _ = root.Close() }()
-			// Nonblocking open lets the regular-file check reject FIFOs without waiting for a writer.
-			return root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+		if under(dir, path) {
+			return openIn(dir, path)
 		}
 	}
+	// A granted name is opened through its parent, so os.Root still refuses a link
+	// that leaves the parent, and nothing else in the parent becomes readable.
+	if slices.Contains(f.Paths, path) && filepath.Dir(path) != path {
+		return openIn(filepath.Dir(path), path)
+	}
 	return nil, fmt.Errorf("path is outside the allowed directories (%s); add another with --allow DIR", strings.Join(f.Allowed, ", "))
+}
+
+func openIn(dir, path string) (*os.File, error) {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	// Nonblocking open lets the regular-file check reject FIFOs without waiting for a writer.
+	return root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 }
 func (f Files) ReadFile(path string) (*Source, error) {
 	return f.readFile(path, nil)

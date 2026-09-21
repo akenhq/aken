@@ -100,14 +100,26 @@ func scopeGrant(dir string) ([]string, error) {
 	return []string{dir, canonical}, nil
 }
 
-func inside(path string, roots []string) bool {
-	for _, root := range roots {
-		rel, err := filepath.Rel(filepath.Clean(root), path)
-		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return true
-		}
+// pathGrant reports the forms of path that granting it on its own has to cover,
+// or why it cannot be granted alone. The path must already exist, because a
+// grant that names nothing would be revoked before the file appeared.
+func pathGrant(path string) ([]string, error) {
+	if filepath.Dir(path) == path {
+		return nil, errors.New("it is a filesystem root")
 	}
-	return false
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return nil, errors.New("the path does not exist")
+	} else if err != nil {
+		return nil, errors.New("the path cannot be read")
+	}
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, errors.New("the path cannot be resolved")
+	}
+	if canonical == path {
+		return []string{path}, nil
+	}
+	return []string{path, canonical}, nil
 }
 
 // isDir says whether path names the directory itself, so that a refusal can name
@@ -117,7 +129,7 @@ func resolve(files source.Files, path string, isDir bool) (string, error) {
 		return "", errors.New("path must be absolute")
 	}
 	path = filepath.Clean(path)
-	if !inside(path, files.Allowed) {
+	if !files.Permits(path) {
 		return "", outsideScope(files, path, isDir)
 	}
 	file, err := files.Open(path)
@@ -147,7 +159,7 @@ func resolve(files source.Files, path string, isDir bool) (string, error) {
 	}
 	// A path inside the scope that resolves outside it is a link escaping the scope,
 	// never a directory the operator is invited to add.
-	if !inside(canonical, files.Allowed) {
+	if !files.Permits(canonical) {
 		return "", errors.New("path resolves outside the session scope through a link")
 	}
 	return canonical, nil

@@ -97,10 +97,12 @@ arrays, no shell, and `/usr/bin` or `/bin` paths without a PATH lookup.
 | `1` (default) | No job is preapproved. The human approves a job or plan in the server terminal. That approval permits automatic sending after redaction, except that strings to inspect pause the result for send or drop. |
 | `0` | Starting the session preapproves every catalog v1 job inside the path scope. Redacted results auto-send, including flagged results. The terminal shows a rolling summary and flag count. |
 
-Only level 1 can add a directory to the scope during a session, and only
-through the approval screen, which names every directory the approval adds
-before the human answers. Level 0 keeps the scope its preapproval was defined
-by and rejects paths outside it.
+Only level 1 can grant a path outside the scope during a session, and only
+through the approval screen, which names everything the answer grants before
+the human gives it. `a` grants each row's directory until the session ends;
+`o` grants each row's single name for that job alone, and is offered only when
+every row can be served that way. Level 0 keeps the scope its preapproval was
+defined by and rejects paths outside it.
 
 Chat join requires the MCP's explicit `--allow-chat-join` opt-in. It puts the
 token in the chat transcript and forces the collector to level 1 even when
@@ -111,18 +113,22 @@ mean the human inspected every output byte.
 `via` is reported by the joiner and not authenticated, so the level-1 promotion covers the honest chat join, not a token holder with a modified client.
 
 The collector refuses root and uses the same user and log groups as collect.
-File jobs stay under `/var/log`, repeatable `--allow` roots, and directories
-the human added on the approval screen during the session. Canonical path
+File jobs stay under `/var/log`, repeatable `--allow` roots, directories the
+human added on the approval screen during the session, and single names
+granted for one job. A granted name covers that one name and nothing under
+it, and is opened through its parent directory, so `os.Root` still refuses a
+link that leaves that parent and no sibling becomes readable. Canonical path
 resolution through `os.Root` refuses escapes, including symlinks that leave
 an allowed root. Search expands at most 200 files within scope.
 
 A path outside the scope is a request, never a grant. At level 1 the approval
-screen marks the row `+` and names the directory that approving would add for
-the rest of the session; denying adds nothing. A path inside the scope that
-resolves outside it is a link escaping the scope and is refused before
-approval rather than offered, so a link planted under an allowed root cannot
-become an invitation to widen the scope. The scope a session ran under, and
-every directory added to it, are recorded in `session.json` and in
+screen marks the row `+` and names both what a session grant would add and
+what a one-job grant would add; denying adds nothing. A one-job grant is
+revoked when the job or plan finishes, whatever its outcome. A path inside the
+scope that resolves outside it is a link escaping the scope and is refused
+before approval rather than offered, so a link planted under an allowed root
+cannot become an invitation to widen the scope. The scope a session ran under,
+and every grant made during it, are recorded in `session.json` and in
 `jobs.log`.
 
 The approval screen marks sensitive paths with `!`: `.env` and `.env.*`,

@@ -18,21 +18,46 @@ import (
 
 func visible(s string) string { return screen.Visible([]byte(s)) }
 
-// widening is a row whose path lies outside the scope, together with the
-// directories approving it would add for the rest of the session.
+// verdict is what the person at the terminal answered on the approval screen.
+type verdict int
+
+const (
+	verdictDeny verdict = iota
+	verdictApprove
+	verdictOnce
+)
+
+// widening is a row whose path lies outside the scope, with the two grants that
+// would let it run: dirs, added to the scope until the session ends, and paths,
+// the single names this job alone needs. paths is empty when the row cannot be
+// served by names alone, which is why reason then says what it needs instead.
 type widening struct {
-	row  int
-	dirs []string
+	row         int
+	dirs, paths []string
+	reason      string
 }
 
-func (w widening) note() string {
-	if len(w.dirs) > 1 {
-		return w.dirs[0] + " (resolves to " + w.dirs[1] + ")"
+// grantNote names a grant, and the path it resolves to when a link makes the two
+// differ, so neither form is a surprise after the answer.
+func grantNote(grant []string) string {
+	if len(grant) > 1 {
+		return grant[0] + " (resolves to " + grant[1] + ")"
 	}
-	return w.dirs[0]
+	return grant[0]
 }
 
-func approve(stdin *bufio.Reader, stdout io.Writer, job protocol.Job, jobs []preparedJob, widenings []widening, scope []string, pageLines int) (bool, error) {
+// onceReason returns the reason no row can be allowed once, or "" when every row
+// can be.
+func onceReason(widenings []widening) string {
+	for _, w := range widenings {
+		if len(w.paths) == 0 {
+			return w.reason
+		}
+	}
+	return ""
+}
+
+func approve(stdin *bufio.Reader, stdout io.Writer, job protocol.Job, jobs []preparedJob, widenings []widening, scope []string, pageLines int) (verdict, error) {
 	for {
 		title := job.Name
 		if job.Name == "plan" {
@@ -53,27 +78,42 @@ func approve(stdin *bufio.Reader, stdout io.Writer, job protocol.Job, jobs []pre
 			}
 			_, _ = fmt.Fprintln(stdout)
 		}
+		once := len(widenings) > 0 && onceReason(widenings) == ""
 		if len(widenings) > 0 {
 			_, _ = fmt.Fprintf(stdout, "\nOutside the scope (%s). Approving adds these directories\nto the scope until the session ends:\n\n", visible(strings.Join(scope, ", ")))
 			for _, w := range widenings {
-				_, _ = fmt.Fprintf(stdout, "  row %d  %s\n", w.row, visible(w.note()))
+				_, _ = fmt.Fprintf(stdout, "  row %d  %s\n", w.row, visible(grantNote(w.dirs)))
+			}
+			if once {
+				_, _ = fmt.Fprint(stdout, "\nAllowing once adds only these paths, and only for this job:\n\n")
+				for _, w := range widenings {
+					_, _ = fmt.Fprintf(stdout, "  row %d  %s\n", w.row, visible(grantNote(w.paths)))
+				}
+			} else {
+				_, _ = fmt.Fprintf(stdout, "\nThis job cannot be allowed once: %s.\n", visible(onceReason(widenings)))
 			}
 		}
-		_, _ = fmt.Fprint(stdout, "\n[a] approve   [d] deny   [v] view params\n>\n")
+		if once {
+			_, _ = fmt.Fprint(stdout, "\n[a] approve   [o] allow once   [d] deny   [v] view params\n>\n")
+		} else {
+			_, _ = fmt.Fprint(stdout, "\n[a] approve   [d] deny   [v] view params\n>\n")
+		}
 		for {
 			input, err := stdin.ReadString('\n')
 			if err != nil {
-				return false, err
+				return verdictDeny, err
 			}
-			switch strings.TrimSpace(input) {
-			case "a":
-				return true, nil
-			case "d":
-				return false, nil
-			case "v":
+			switch answer := strings.TrimSpace(input); {
+			case answer == "a":
+				return verdictApprove, nil
+			case answer == "o" && once:
+				return verdictOnce, nil
+			case answer == "d":
+				return verdictDeny, nil
+			case answer == "v":
 				var out bytes.Buffer
 				if err := json.Indent(&out, job.Params, "", "  "); err != nil {
-					return false, err
+					return verdictDeny, err
 				}
 				lines := strings.Split(out.String(), "\n")
 				for i, line := range lines {
@@ -86,7 +126,7 @@ func approve(stdin *bufio.Reader, stdout io.Writer, job protocol.Job, jobs []pre
 					}
 				}
 				if err := screen.Page(stdin, stdout, lines, pageLines); err != nil {
-					return false, err
+					return verdictDeny, err
 				}
 			default:
 				_, _ = fmt.Fprint(stdout, ">\n")

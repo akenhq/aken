@@ -393,7 +393,7 @@ func TestScopeRefusal(t *testing.T) {
 	}
 }
 
-func TestScopeGrant(t *testing.T) {
+func TestGrants(t *testing.T) {
 	dir := t.TempDir()
 	logs := filepath.Join(dir, "logs")
 	if err := os.Mkdir(logs, 0o700); err != nil {
@@ -407,25 +407,38 @@ func TestScopeGrant(t *testing.T) {
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	linkedFile := filepath.Join(link, "app.log")
+	if err := os.WriteFile(filepath.Join(logs, "app.log"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for _, tt := range []struct {
-		dir  string
-		want []string
-		bad  string
+		name  string
+		grant func(string) ([]string, error)
+		path  string
+		want  []string
+		bad   string
 	}{
-		{dir: logs, want: []string{logs}},
-		{dir: link, want: []string{link, logs}},
-		{dir: file, bad: "it is not a directory"},
-		{dir: filepath.Join(dir, "gone"), bad: "the directory does not exist"},
+		{name: "scope", grant: scopeGrant, path: logs, want: []string{logs}},
+		{name: "scope/link", grant: scopeGrant, path: link, want: []string{link, logs}},
+		{name: "scope/file", grant: scopeGrant, path: file, bad: "it is not a directory"},
+		{name: "scope/gone", grant: scopeGrant, path: filepath.Join(dir, "gone"), bad: "the directory does not exist"},
+		{name: "path", grant: pathGrant, path: file, want: []string{file}},
+		{name: "path/dir", grant: pathGrant, path: logs, want: []string{logs}},
+		{name: "path/link", grant: pathGrant, path: linkedFile, want: []string{linkedFile, filepath.Join(logs, "app.log")}},
+		{name: "path/gone", grant: pathGrant, path: filepath.Join(dir, "gone"), bad: "the path does not exist"},
+		{name: "path/root", grant: pathGrant, path: "/", bad: "it is a filesystem root"},
 	} {
-		dirs, err := scopeGrant(tt.dir)
-		if tt.bad != "" {
-			if err == nil || err.Error() != tt.bad {
-				t.Fatalf("%s: err = %v, want %q", tt.dir, err, tt.bad)
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.grant(tt.path)
+			if tt.bad != "" {
+				if err == nil || err.Error() != tt.bad {
+					t.Fatalf("err = %v, want %q", err, tt.bad)
+				}
+				return
 			}
-			continue
-		}
-		if err != nil || !reflect.DeepEqual(dirs, tt.want) {
-			t.Fatalf("%s: %v, %v", tt.dir, dirs, err)
-		}
+			if err != nil || !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("%v, %v", got, err)
+			}
+		})
 	}
 }
