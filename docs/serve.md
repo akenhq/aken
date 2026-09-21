@@ -175,8 +175,12 @@ not wait. A result with no flags can still contain sensitive data.
 Denied and rejected results have a summary with the reason, for example:
 
 ```text
-14:02:07Z  read_file /etc/shadow  rejected: outside the scope
+14:02:07Z  read_file /etc/shadow  rejected: outside the scope (/var/log); restart aken serve with --allow DIR to widen it
+14:02:09Z  tail /var/log/app/app.log  error: cannot read file: permission denied for the user running aken serve
 ```
+
+Errors give the cause, such as a missing file, a permission problem, or a
+non-regular file. They do not repeat the path or any file content.
 
 | Status | Meaning |
 |---|---|
@@ -215,6 +219,11 @@ their MCP tool names. Use catalog names inside a `plan`.
 | `systemctl_status` | `unit` | `systemctl status --no-pager --lines=0 <unit>` | Command output; exit status 0..4 is `ok`, higher is `error` |
 | `ps` | `{}` | `ps -eo pid,ppid,user,%cpu,%mem,rss,etimes,args --sort=-%cpu` | Command output, at most 500 lines |
 | `df` | `{}` | `df -hP` | Command output |
+
+`read_file`, `search`, and `tail` read gzip files, such as rotated
+`error.log.2.gz`, as their decompressed text. Line numbers count lines of that
+text. They stream the file, so any file size works; one line can be at most
+128 MiB.
 
 For `journal` and `docker_logs`, `regex` selects matching lines. `max` is
 1..500 lines per result, default 200. `tail` selects the last 1..500 lines of

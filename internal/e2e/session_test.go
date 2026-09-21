@@ -66,8 +66,9 @@ func TestLiveSession(t *testing.T) {
 		t.Log("4. Reject an outside-scope file without prompting")
 		outside := filepath.Join(t.TempDir(), "outside.log")
 		writeSessionFile(t, outside, "must never be sent\n")
-		checkLiveResult(t, h.call(t, cs, "read_file", map[string]any{"path": outside})(), "rejected: outside the scope\n", liveMeta("j3", "rejected", 0, 0, 0, "", "outside the scope"))
-		noApproval(t, h.out.until(t, "14:00:00Z  read_file "+outside+"  rejected: outside the scope\n"))
+		scope := "outside the scope (/var/log, " + h.options.Allow[0] + "); restart aken serve with --allow DIR to widen it"
+		checkLiveResult(t, h.call(t, cs, "read_file", map[string]any{"path": outside})(), "rejected: "+scope+"\n", liveMeta("j3", "rejected", 0, 0, 0, "", scope))
+		noApproval(t, h.out.until(t, "14:00:00Z  read_file "+outside+"  rejected: "+scope+"\n"))
 
 		t.Log("5. Approve tail_file, inspect the flagged string, and drop the result")
 		await = h.call(t, cs, "tail_file", map[string]any{"path": h.flagPath, "n": 1})

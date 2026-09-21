@@ -4,6 +4,8 @@ package source
 import (
 	"bufio"
 	"bytes"
+	"compress/flate"
+	"compress/gzip"
 	"errors"
 	"fmt"
 	"io"
@@ -66,19 +68,31 @@ func (f Files) readFile(path string, seen map[string]bool) (*Source, error) {
 	if seen[canonical] {
 		return nil, nil
 	}
-	var data []byte
-	if f.Tail > 0 {
-		data, err = readTail(file, info.Size(), f.Tail)
-	} else {
-		data, err = io.ReadAll(io.LimitReader(file, maxFileBytes+1))
-	}
+	reader, compressed, err := decompress(file)
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > maxFileBytes {
-		return nil, errors.New("file exceeds the 128 MiB artifact cap; narrow --since or use --tail")
+	var lines [][]byte
+	switch {
+	case compressed && f.Tail > 0:
+		// A gzip stream cannot be read from the end, so keep the last lines while streaming it.
+		lines, _, err = lastLines(reader, f.Tail)
+	case f.Tail > 0:
+		var data []byte
+		data, err = readTail(file, info.Size(), f.Tail)
+		lines = splitLines(data)
+	default:
+		var data []byte
+		data, err = io.ReadAll(io.LimitReader(reader, maxFileBytes+1))
+		if err == nil && len(data) > maxFileBytes {
+			err = errors.New("file exceeds the 128 MiB artifact cap; narrow --since or use --tail")
+		}
+		lines = splitLines(data)
 	}
-	s := &Source{Spec: Spec{Kind: KindFile, Target: path}, Name: "file:" + path, Lines: splitLines(data)}
+	if err != nil {
+		return nil, readError(err, compressed)
+	}
+	s := &Source{Spec: Spec{Kind: KindFile, Target: path}, Name: "file:" + path, Lines: lines}
 	if f.Tail > 0 {
 		if len(s.Lines) > f.Tail {
 			s.Lines = s.Lines[len(s.Lines)-f.Tail:]
@@ -185,37 +199,127 @@ func (f Files) ReadLines(path string, from, to int) (lines [][]byte, total int, 
 	if from < 1 || to < from {
 		return nil, 0, errors.New("invalid line range")
 	}
-	file, err := f.Open(path)
+	total, err = f.scan(path, func(n int, line []byte) bool {
+		if n >= from && n <= to {
+			lines = append(lines, slices.Clone(line))
+		}
+		return true
+	})
 	if err != nil {
 		return nil, 0, err
+	}
+	return lines, total, nil
+}
+
+// TailLines returns the last n lines of a file and its total line count, so callers can number them.
+func (f Files) TailLines(path string, n int) (lines [][]byte, total int, err error) {
+	if n < 1 {
+		return nil, 0, errors.New("invalid tail count")
+	}
+	err = f.open(path, func(r io.Reader) (err error) {
+		lines, total, err = lastLines(r, n)
+		return err
+	})
+	return lines, total, err
+}
+
+func lastLines(r io.Reader, n int) ([][]byte, int, error) {
+	var lines [][]byte
+	total, err := scanLines(r, func(_ int, line []byte) bool {
+		if len(lines) == n {
+			lines = append(lines[:0], lines[1:]...)
+		}
+		lines = append(lines, slices.Clone(line))
+		return true
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	return lines, total, nil
+}
+
+// scan streams a file's lines to fn, numbered from 1, until fn returns false. Only one line is held
+// at a time, so live reads work on files of any size; a single line is still capped at maxFileBytes.
+func (f Files) scan(path string, fn func(n int, line []byte) bool) (total int, err error) {
+	err = f.open(path, func(r io.Reader) (err error) {
+		total, err = scanLines(r, fn)
+		return err
+	})
+	return total, err
+}
+
+// open passes read a regular file's content, decompressed if it is gzip.
+func (f Files) open(path string, read func(io.Reader) error) error {
+	file, err := f.Open(path)
+	if err != nil {
+		return err
 	}
 	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
 	if err != nil {
-		return nil, 0, err
+		return err
 	}
 	if !info.Mode().IsRegular() {
-		return nil, 0, errors.New("source is not a regular file")
+		return errors.New("source is not a regular file")
 	}
-	reader := bufio.NewReader(io.LimitReader(file, maxFileBytes+1))
-	size := 0
+	reader, compressed, err := decompress(file)
+	if err != nil {
+		return err
+	}
+	return readError(read(reader), compressed)
+}
+
+// decompress returns a reader over the file's text. Content that starts with the gzip magic bytes is
+// decompressed, so rotated logs such as error.log.2.gz read as text whatever their name.
+func decompress(file io.Reader) (io.Reader, bool, error) {
+	reader := bufio.NewReaderSize(file, 64<<10)
+	magic, err := reader.Peek(2)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, false, err
+	}
+	if !bytes.Equal(magic, []byte{0x1f, 0x8b}) {
+		return reader, false, nil
+	}
+	gz, err := gzip.NewReader(reader)
+	if err != nil {
+		return nil, false, errors.New("gzip file is corrupt")
+	}
+	return gz, true, nil
+}
+
+func readError(err error, compressed bool) error {
+	var corrupt flate.CorruptInputError
+	if compressed && (errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, gzip.ErrChecksum) || errors.Is(err, gzip.ErrHeader) || errors.As(err, &corrupt)) {
+		return errors.New("gzip file is truncated or corrupt")
+	}
+	return err
+}
+
+func scanLines(r io.Reader, fn func(n int, line []byte) bool) (int, error) {
+	reader := bufio.NewReaderSize(r, 64<<10)
+	var line []byte
+	total := 0
 	for {
-		line, readErr := reader.ReadBytes('\n')
-		size += len(line)
-		if size > maxFileBytes {
-			return nil, 0, errors.New("file exceeds the 128 MiB cap")
+		chunk, readErr := reader.ReadSlice('\n')
+		if len(line)+len(chunk) > maxFileBytes {
+			return 0, errors.New("file has a line longer than 128 MiB")
+		}
+		line = append(line, chunk...)
+		if errors.Is(readErr, bufio.ErrBufferFull) {
+			continue
 		}
 		if len(line) > 0 {
 			total++
-			if total >= from && total <= to {
-				lines = append(lines, bytes.TrimSuffix(line, []byte{'\n'}))
+			if !fn(total, bytes.TrimSuffix(line, []byte{'\n'})) {
+				return total, nil
 			}
 		}
+		line = line[:0]
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) {
-				return lines, total, nil
+				return total, nil
 			}
-			return nil, 0, readErr
+			return 0, readErr
 		}
 	}
 }
@@ -251,31 +355,63 @@ func (f Files) Search(pattern string, q SearchQuery) (SearchResult, error) {
 	}
 	matches := 0
 	for i := fileIndex; i < len(q.Paths); i++ {
-		lines, _, err := f.ReadLines(q.Paths[i], 1, int(^uint(0)>>1))
-		if err != nil {
-			return out, err
+		path := q.Paths[i]
+		emit := func(n int, line []byte) {
+			sep := "-"
+			if re.Match(line) {
+				sep = ":"
+			}
+			out.Lines = append(out.Lines, fmt.Sprintf("%s:%d%s %s", path, n, sep, line))
 		}
-		shown := map[int]bool{}
-		for n := first - 1; n < len(lines); n++ {
-			if !re.Match(lines[n]) {
-				continue
+		// before holds the last q.Before lines not yet shown; after counts context lines still owed.
+		type held struct {
+			n    int
+			line []byte
+		}
+		var before []held
+		after, done := 0, false
+		_, err := f.scan(path, func(n int, line []byte) bool {
+			hit := n >= first && re.Match(line)
+			if hit && matches == q.Max && out.Next == "" {
+				out.Next = fmt.Sprintf("%d:%d", i, n)
 			}
-			if matches == q.Max {
-				out.Next = fmt.Sprintf("%d:%d", i, n+1)
-				return out, nil
-			}
-			matches++
-			for j := max(0, n-q.Before); j < min(len(lines), n+q.After+1); j++ {
-				if shown[j] {
-					continue
+			if out.Next != "" {
+				if after == 0 {
+					done = true
+					return false
 				}
-				shown[j] = true
-				sep := "-"
-				if re.Match(lines[j]) {
-					sep = ":"
-				}
-				out.Lines = append(out.Lines, fmt.Sprintf("%s:%d%s %s", q.Paths[i], j+1, sep, lines[j]))
+				emit(n, line)
+				after--
+				return true
 			}
+			if hit {
+				matches++
+				for _, h := range before {
+					emit(h.n, h.line)
+				}
+				before = before[:0]
+				emit(n, line)
+				after = q.After
+				return true
+			}
+			if after > 0 {
+				emit(n, line)
+				after--
+				return true
+			}
+			if q.Before > 0 {
+				if len(before) == q.Before {
+					before = append(before[:0], before[1:]...)
+				}
+				before = append(before, held{n, slices.Clone(line)})
+			}
+			return true
+		})
+		if err != nil {
+			return SearchResult{}, err
+		}
+		if done || out.Next != "" {
+			return out, nil
 		}
 		first = 1
 	}

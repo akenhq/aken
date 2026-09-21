@@ -41,7 +41,7 @@ Select at least one source. Each source flag can repeat.
 |---|---|---|
 | `--unit NAME` | journald unit, for example nginx or nginx.service | `--since` to `--until` |
 | `--container NAME` | Docker containers using journald: an exact name, a short name matching names that start with `NAME` followed by `.`, `_`, or `-` (including Swarm task names), or a 12- or 64-character hex ID; several matching names become several sources | `--since` to `--until` |
-| `--file PATH` | plain text file; absolute path under /var/log or a --allow directory | No timestamp filtering within the file; `--tail` limits lines |
+| `--file PATH` | plain text or gzip file; absolute path under /var/log or a --allow directory | No timestamp filtering within the file; `--tail` limits lines |
 | `--glob PATTERN` | files matching a glob; every match must be under an allowed directory | Skips files last modified before `--since`; `--tail` limits lines |
 
 The fixed read order is units, containers, files, then globs. The same canonical
