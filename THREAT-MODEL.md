@@ -97,6 +97,11 @@ arrays, no shell, and `/usr/bin` or `/bin` paths without a PATH lookup.
 | `1` (default) | No job is preapproved. The human approves a job or plan in the server terminal. That approval permits automatic sending after redaction, except that strings to inspect pause the result for send or drop. |
 | `0` | Starting the session preapproves every catalog v1 job inside the path scope. Redacted results auto-send, including flagged results. The terminal shows a rolling summary and flag count. |
 
+Only level 1 can add a directory to the scope during a session, and only
+through the approval screen, which names every directory the approval adds
+before the human answers. Level 0 keeps the scope its preapproval was defined
+by and rejects paths outside it.
+
 Chat join requires the MCP's explicit `--allow-chat-join` opt-in. It puts the
 token in the chat transcript and forces the collector to level 1 even when
 started at level 0. Both levels require a terminal. Redaction and flags are
@@ -106,9 +111,19 @@ mean the human inspected every output byte.
 `via` is reported by the joiner and not authenticated, so the level-1 promotion covers the honest chat join, not a token holder with a modified client.
 
 The collector refuses root and uses the same user and log groups as collect.
-File jobs stay under `/var/log` and repeatable `--allow` roots. Canonical path
+File jobs stay under `/var/log`, repeatable `--allow` roots, and directories
+the human added on the approval screen during the session. Canonical path
 resolution through `os.Root` refuses escapes, including symlinks that leave
 an allowed root. Search expands at most 200 files within scope.
+
+A path outside the scope is a request, never a grant. At level 1 the approval
+screen marks the row `+` and names the directory that approving would add for
+the rest of the session; denying adds nothing. A path inside the scope that
+resolves outside it is a link escaping the scope and is refused before
+approval rather than offered, so a link planted under an allowed root cannot
+become an invitation to widen the scope. The scope a session ran under, and
+every directory added to it, are recorded in `session.json` and in
+`jobs.log`.
 
 The approval screen marks sensitive paths with `!`: `.env` and `.env.*`,
 `shadow`, `gshadow`; suffixes `.pem`, `.key`, `.p12`, `.pfx`, `.kdbx`,
@@ -149,7 +164,7 @@ or expiry ends the collector session. The local audit copy remains;
 | A mislabelled exec job slips past relay policy | The collector rejects a decrypted job whose real class differs from its authenticated envelope class. Relay class policy is a circuit breaker; the collector is the enforcement point. | Collector; relay checks envelope class policy |
 | An agent joins a session no human opened | The collector generates a short-lived, single-use token bound to its process. The human carries it to the local MCP. | Collector and local MCP |
 | A token leaks | The human enters it outside the agent conversation by default. Chat joining requires explicit opt-in and exposes the token to the transcript. Tokens are short-lived and single-use, and never enter the relay, logs, or local audit copy. | Collector, local MCP, and human operator |
-| Symlink or path escapes in file jobs | Configured scope, canonical paths, and `os.Root` prevent escapes, including symlink races. The human approves resolved paths. | Collector |
+| Symlink or path escapes in file jobs | Configured scope, canonical paths, and `os.Root` prevent escapes, including symlink races. The human approves resolved paths. A link that leaves the scope is refused, never offered as a directory to add. | Collector |
 | Token brute force against the relay | Long random tokens of at least 128 bits, unguessable identifiers, token-derived relay credentials stored as hashes, no listing or enumeration endpoints, and rate limits. | Collector and local MCP derive credentials; relay checks credentials and limits |
 | The relay becomes a log store or free file drop | Ephemeral blobs, payload and blob size caps, session lifetime caps, per-IP and per-account rate limits, abuse monitoring, and accounts for persistent sessions. Phase 1 allows 128 MiB per artifact, with a TTL default of 4 h and a cap of 24 h. | Relay |
 

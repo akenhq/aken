@@ -85,7 +85,8 @@ func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writ
 	if err != nil {
 		return fail(err)
 	}
-	a, err := newAudit(o, id, created, remote.ExpiresAt)
+	scope := append([]string{"/var/log"}, o.Allow...)
+	a, err := newAudit(o, scope, id, created, remote.ExpiresAt)
 	if err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -96,7 +97,7 @@ func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writ
 	defer cancelLife()
 	active, cancel := context.WithCancelCause(lifetime)
 	defer cancel(nil)
-	s := session{o: o, client: client, id: id, engine: engine, audit: a, files: source.Files{Allowed: append([]string{"/var/log"}, o.Allow...)}, stdin: bufio.NewReader(contextReader{active, stdin}), stdout: stdout, stderr: stderr, pageLines: pageLines, nextJob: 1, nextResult: 1}
+	s := session{o: o, client: client, id: id, engine: engine, audit: a, files: source.Files{Allowed: scope}, stdin: bufio.NewReader(contextReader{active, stdin}), stdout: stdout, stderr: stderr, pageLines: pageLines, nextJob: 1, nextResult: 1}
 	_, _ = fmt.Fprintf(stdout, "aken serve: session open on %s, level %d, expires %s\nScope    %s\nLocal    %s\nRedaction   %d rules (%d default", visible(o.RelayURL), o.Level, remote.ExpiresAt.UTC().Format(time.RFC3339), visible(strings.Join(s.files.Allowed, ", ")), visible(a.dir), defaults+extras, defaults)
 	if rulesPath != "" {
 		_, _ = fmt.Fprintf(stdout, ", %d from %s", extras, visible(rulesPath))
@@ -273,6 +274,8 @@ func (s *session) handle(ctx context.Context, envelope protocol.Envelope, data [
 	prepared := make([]preparedJob, len(jobs))
 	validation := make([]error, len(jobs))
 	var rows []preparedJob
+	var rowJob []int
+	var widenings []widening
 	for i, j := range jobs {
 		p, err := prepare(ctx, j, envelope.Class, s.files, s.o.Now())
 		prepared[i] = p
@@ -280,17 +283,45 @@ func (s *session) handle(ctx context.Context, envelope protocol.Envelope, data [
 		if err := s.audit.event(s.o.Now(), envelope.Seq, p, "received", protocol.Result{}); err != nil {
 			return err
 		}
-		if err != nil {
+		var scoped *scopeError
+		if err != nil && errors.As(err, &scoped) {
+			// Level 0 has no approval screen, so its scope stays what the operator set on the
+			// command line. Level 1 offers the directory with the rest of the job.
+			if s.o.Level == 0 {
+				validation[i] = fmt.Errorf("%w; restart aken serve with --allow DIR to add a directory", scoped)
+				continue
+			}
+			dirs, grantErr := scopeGrant(scoped.dir)
+			if grantErr != nil {
+				validation[i] = fmt.Errorf("%w; it cannot be added to the scope: %w", scoped, grantErr)
+				continue
+			}
+			// The row is not invalid, it is pending the operator's decision on the approval
+			// screen; approving re-prepares it against the widened scope.
+			p.widening = true
+			prepared[i], validation[i] = p, nil
+			widenings = append(widenings, widening{row: len(rows) + 1, dirs: dirs})
+		} else if err != nil {
 			continue
 		}
 		rows = append(rows, p)
+		rowJob = append(rowJob, i)
 	}
 	approved := s.o.Level == 0
 	var err error
 	if len(rows) > 0 && s.o.Level == 1 {
-		approved, err = approve(s.stdin, s.stdout, job, rows, s.pageLines)
+		approved, err = approve(s.stdin, s.stdout, job, rows, widenings, s.files.Allowed, s.pageLines)
 		if err != nil {
 			return err
+		}
+	}
+	if approved && len(widenings) > 0 {
+		if err := s.widen(envelope.Seq, rows, widenings); err != nil {
+			return err
+		}
+		for _, w := range widenings {
+			i := rowJob[w.row-1]
+			prepared[i], validation[i] = prepare(ctx, jobs[i], envelope.Class, s.files, s.o.Now())
 		}
 	}
 	for i, p := range prepared {
@@ -301,7 +332,11 @@ func (s *session) handle(ctx context.Context, envelope protocol.Envelope, data [
 			continue
 		}
 		if !approved {
-			r := protocol.Result{ID: p.job.ID, Status: "denied", Error: "denied by user"}
+			message := "denied by user"
+			if p.widening {
+				message = "denied by user; the directory was not added to the scope"
+			}
+			r := protocol.Result{ID: p.job.ID, Status: "denied", Error: message}
 			if err := s.audit.event(s.o.Now(), envelope.Seq, p, "denied", r); err != nil {
 				return err
 			}
@@ -361,6 +396,41 @@ func (s *session) handle(ctx context.Context, envelope protocol.Envelope, data [
 	}
 	return nil
 }
+
+// widen adds the approved directories to the session scope. It records the grant
+// in the audit log and in session.json, so the local copy shows the scope the
+// results were read under.
+func (s *session) widen(seq uint64, rows []preparedJob, widenings []widening) error {
+	var added []string
+	for _, w := range widenings {
+		var fresh []string
+		for _, dir := range w.dirs {
+			if !slices.Contains(s.files.Allowed, dir) && !slices.Contains(fresh, dir) {
+				fresh = append(fresh, dir)
+			}
+		}
+		if len(fresh) == 0 {
+			continue
+		}
+		s.files.Allowed = append(s.files.Allowed, fresh...)
+		added = append(added, fresh...)
+		granted := rows[w.row-1]
+		granted.paths = fresh
+		if err := s.audit.event(s.o.Now(), seq, granted, "scope-added", protocol.Result{}); err != nil {
+			return err
+		}
+	}
+	if len(added) == 0 {
+		return nil
+	}
+	s.audit.session.Scope = slices.Clone(s.files.Allowed)
+	if err := s.audit.writeSession(); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(s.stdout, "%s  scope    %s added for this session\n", s.o.Now().UTC().Format("15:04:05Z"), visible(strings.Join(added, ", ")))
+	return nil
+}
+
 func (s *session) reject(ctx context.Context, seq uint64, p preparedJob, message string) error {
 	r := protocol.Result{ID: p.job.ID, Status: "rejected", Error: message}
 	if err := s.audit.event(s.o.Now(), seq, p, "rejected", r); err != nil {

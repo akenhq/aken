@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -30,7 +31,7 @@ type preparedJob struct {
 	job                 protocol.Job
 	paths               []string
 	target, description string
-	sensitive           bool
+	sensitive, widening bool
 	read                protocol.ReadFileParams
 	tail                protocol.TailParams
 	search              protocol.SearchParams
@@ -54,6 +55,51 @@ func decode(params json.RawMessage, into any) error {
 	return nil
 }
 
+// scopeError marks a path the session may not read yet. It carries the directory
+// the operator would have to allow, so level 1 can offer that on the approval
+// screen instead of refusing the job outright.
+type scopeError struct {
+	dir   string
+	scope []string
+}
+
+func (e *scopeError) Error() string {
+	return "outside the session scope (" + strings.Join(e.scope, ", ") + ")"
+}
+
+func outsideScope(files source.Files, path string, isDir bool) error {
+	dir := path
+	if !isDir {
+		dir = filepath.Dir(path)
+	}
+	return &scopeError{dir: dir, scope: slices.Clone(files.Allowed)}
+}
+
+// scopeGrant reports the directories that adding dir to the scope has to cover,
+// or why it cannot be added. A directory reached through a link needs its
+// canonical form too, because the collector checks both the requested path and
+// its resolved form against the scope.
+func scopeGrant(dir string) ([]string, error) {
+	info, err := os.Stat(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, errors.New("the directory does not exist")
+	}
+	if err != nil {
+		return nil, errors.New("the directory cannot be read")
+	}
+	if !info.IsDir() {
+		return nil, errors.New("it is not a directory")
+	}
+	canonical, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil, errors.New("the directory cannot be resolved")
+	}
+	if canonical == dir {
+		return []string{dir}, nil
+	}
+	return []string{dir, canonical}, nil
+}
+
 func inside(path string, roots []string) bool {
 	for _, root := range roots {
 		rel, err := filepath.Rel(filepath.Clean(root), path)
@@ -64,13 +110,15 @@ func inside(path string, roots []string) bool {
 	return false
 }
 
-func resolve(files source.Files, path string) (string, error) {
+// isDir says whether path names the directory itself, so that a refusal can name
+// the directory the operator would have to allow.
+func resolve(files source.Files, path string, isDir bool) (string, error) {
 	if !filepath.IsAbs(path) {
 		return "", errors.New("path must be absolute")
 	}
 	path = filepath.Clean(path)
 	if !inside(path, files.Allowed) {
-		return "", errors.New("outside the scope")
+		return "", outsideScope(files, path, isDir)
 	}
 	file, err := files.Open(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -97,8 +145,10 @@ func resolve(files source.Files, path string) (string, error) {
 	} else if err != nil {
 		return "", errors.New("path cannot be resolved")
 	}
+	// A path inside the scope that resolves outside it is a link escaping the scope,
+	// never a directory the operator is invited to add.
 	if !inside(canonical, files.Allowed) {
-		return "", errors.New("outside the scope")
+		return "", errors.New("path resolves outside the session scope through a link")
 	}
 	return canonical, nil
 }
@@ -130,7 +180,7 @@ func expand(files source.Files, pattern string, since time.Time) ([]string, erro
 		base = pattern[:i]
 	}
 	base = filepath.Dir(base)
-	if _, err := resolve(files, base); err != nil {
+	if _, err := resolve(files, base, true); err != nil {
 		return nil, err
 	}
 	matches, err := filepath.Glob(pattern)
@@ -140,7 +190,7 @@ func expand(files source.Files, pattern string, since time.Time) ([]string, erro
 	var paths []string
 	seen := map[string]bool{}
 	for _, path := range matches {
-		path, err = resolve(files, path)
+		path, err = resolve(files, path, false)
 		if err != nil || seen[path] {
 			continue
 		}
@@ -225,6 +275,10 @@ func prepare(ctx context.Context, job protocol.Job, class uint8, files source.Fi
 				return p, errors.New("invalid since")
 			}
 		}
+		// The glob and its regex describe the row even when expansion fails, so a refusal
+		// and the approval screen can name what was asked for.
+		p.target = q.Glob
+		p.description = "regex " + q.Regex
 		p.paths, err = expand(files, q.Glob, since)
 		if err != nil {
 			return p, err
@@ -237,7 +291,6 @@ func prepare(ctx context.Context, job protocol.Job, class uint8, files source.Fi
 				return p, errors.New("invalid cursor")
 			}
 		}
-		p.target = q.Glob
 		p.description = fmt.Sprintf("regex %s  %d files", q.Regex, len(p.paths))
 		if len(p.paths) > 0 {
 			p.description += "; first: " + strings.Join(p.paths[:min(3, len(p.paths))], ", ")
@@ -280,10 +333,13 @@ func prepare(ctx context.Context, job protocol.Job, class uint8, files source.Fi
 		return p, err
 	}
 	if job.Name == "read_file" || job.Name == "tail" || job.Name == "list_dir" {
-		p.target, err = resolve(files, p.target)
-		if err != nil {
-			return p, err
+		// The requested path stays in target when resolution fails, so a refusal can name it.
+		p.sensitive = sensitive(p.target)
+		canonical, resolveErr := resolve(files, p.target, job.Name == "list_dir")
+		if resolveErr != nil {
+			return p, resolveErr
 		}
+		p.target = canonical
 		p.paths = []string{p.target}
 	}
 	for _, path := range p.paths {

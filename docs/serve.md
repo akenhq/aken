@@ -22,9 +22,11 @@ to give that user membership in `adm` and `systemd-journal` where those
 groups exist.
 
 File jobs must stay under `/var/log` or a directory you add with `--allow DIR`.
-You can repeat `--allow`. The collector resolves canonical paths through
-`os.Root` and refuses symlinks that leave an allowed root. The user must also
-have permission to read the files.
+You can repeat `--allow`. At level 1 you can also add a directory during the
+session, from the approval screen; see [Paths outside the scope](#paths-outside-the-scope).
+The collector resolves canonical paths through `os.Root` and refuses symlinks
+that leave an allowed root. The user must also have permission to read the
+files.
 
 Command-backed jobs use fixed argument lists and no shell. The collector
 selects `/usr/bin/<name>` or `/bin/<name>`, whichever exists, without a PATH
@@ -96,6 +98,10 @@ Choose the level with `--level N` when you start the session:
 | `1` (default) | Each job or plan on one approval screen | Redacted results without strings to inspect; flagged results pause for send or drop |
 | `0` | Starting the session preapproves every catalog v1 job within the path scope | Every redacted result, including flagged results; the summary shows the flag count |
 
+Only level 1 can add a directory to the scope during the session. At level 0
+the scope stays what you set on the command line, because the preapproval is
+defined by it and there is no approval screen to widen it on.
+
 A session joined through the chat tool runs at level 1 even if you started
 it with `--level 0`. The collector prints:
 
@@ -142,8 +148,61 @@ The collector marks these sensitive paths:
 - Paths with a `.ssh`, `.gnupg`, or `.aws` component.
 
 The marker asks you to inspect the path. It does not add the path to the
-scope or redact its contents. Unknown jobs, invalid parameters, paths outside
-the scope, and class mismatches are rejected before approval.
+scope or redact its contents. Unknown jobs, invalid parameters, and class
+mismatches are rejected before approval.
+
+## Paths outside the scope
+
+At level 1 a path outside the scope is not refused on its own. The row is
+marked `+` and the screen names the directory that approving would add for the
+rest of the session:
+
+```text
+Job j3 from the agent: plan of 2 reads
+
+  1  read_file   /var/log/nginx/error.log  lines 1-200
+  2  read_file + /srv/app/logs/app.log  lines 1-50
+
+Outside the scope (/var/log). Approving adds these directories
+to the scope until the session ends:
+
+  row 2  /srv/app/logs
+
+[a] approve   [d] deny   [v] view params
+>
+```
+
+`a` adds the directories and then runs the job or plan, exactly as `--allow`
+would have. `d` adds nothing and denies the job; the agent is told
+`denied by user; the directory was not added to the scope`. A directory
+reached through a link is named with the path it resolves to, and both forms
+are added.
+
+Approving grants the whole directory for the rest of the session, not the one
+file on the row, so that the next read in the same directory does not ask
+again. Read the directory on the screen before you answer: a row for
+`/etc/shadow` asks you to add `/etc`. The new scope lasts until the session
+ends, is printed as
+
+```text
+14:02:07Z  scope    /srv/app/logs added for this session
+```
+
+and is recorded in `session.json` and as a `scope-added` event in `jobs.log`.
+
+A row carries one marker, and a sensitive path keeps its `!`, so a `+` row is
+not the only one worth reading closely. Two cases are still refused before
+approval, because neither is a directory you would be choosing to open:
+
+- A path inside the scope that resolves outside it through a link.
+- A path whose directory does not exist or is not a directory.
+
+At level 0 there is no approval screen, so a path outside the scope is
+rejected with the scope and the `--allow` remedy:
+
+```text
+14:02:07Z  read_file /etc/shadow  rejected: outside the session scope (/var/log); restart aken serve with --allow DIR to add a directory
+```
 
 ## Results
 
@@ -175,7 +234,7 @@ not wait. A result with no flags can still contain sensitive data.
 Denied and rejected results have a summary with the reason, for example:
 
 ```text
-14:02:07Z  read_file /etc/shadow  rejected: outside the scope
+14:02:07Z  read_file /etc/shadow  denied: denied by user; the directory was not added to the scope
 ```
 
 | Status | Meaning |
@@ -231,8 +290,8 @@ The collector creates this directory with mode `0700`:
 
 | File | Contents |
 |---|---|
-| `session.json` | `session_id`, `relay`, `level`, `created_at`, `expires_at`, `joined_at`, `joined_via`, `ended_at`, `argv`; rewritten at join and exit |
-| `jobs.log` | Append-only JSON lines with `time`, `seq`, `job_id`, `name`, `event`, `params`, `paths`, `status`, `lines`, `lines_redacted`, `flags`, `error`; events are `received`, `approved`, `denied`, `rejected`, `sent`, `dropped` |
+| `session.json` | `session_id`, `relay`, `level`, `created_at`, `expires_at`, `joined_at`, `joined_via`, `scope`, `ended_at`, `argv`; rewritten at join, when the scope grows, and at exit |
+| `jobs.log` | Append-only JSON lines with `time`, `seq`, `job_id`, `name`, `event`, `params`, `paths`, `status`, `lines`, `lines_redacted`, `flags`, `error`; events are `received`, `scope-added`, `approved`, `denied`, `rejected`, `sent`, `dropped`; a `scope-added` event carries the added directories in `paths` |
 | `results/<result seq>.txt` | Exactly the redacted lines of that result message; written once, mode `0400` |
 | `mapping.json` | Placeholder to original value; rewritten through a temporary file and rename after every result that added values |
 

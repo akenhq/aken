@@ -41,7 +41,7 @@ func (f Files) Open(path string) (*os.File, error) {
 			return root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 		}
 	}
-	return nil, errors.New("path is outside the allowed directories (/var/log; add --allow DIR)")
+	return nil, fmt.Errorf("path is outside the allowed directories (%s); add another with --allow DIR", strings.Join(f.Allowed, ", "))
 }
 func (f Files) ReadFile(path string) (*Source, error) {
 	return f.readFile(path, nil)

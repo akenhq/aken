@@ -18,7 +18,21 @@ import (
 
 func visible(s string) string { return screen.Visible([]byte(s)) }
 
-func approve(stdin *bufio.Reader, stdout io.Writer, job protocol.Job, jobs []preparedJob, pageLines int) (bool, error) {
+// widening is a row whose path lies outside the scope, together with the
+// directories approving it would add for the rest of the session.
+type widening struct {
+	row  int
+	dirs []string
+}
+
+func (w widening) note() string {
+	if len(w.dirs) > 1 {
+		return w.dirs[0] + " (resolves to " + w.dirs[1] + ")"
+	}
+	return w.dirs[0]
+}
+
+func approve(stdin *bufio.Reader, stdout io.Writer, job protocol.Job, jobs []preparedJob, widenings []widening, scope []string, pageLines int) (bool, error) {
 	for {
 		title := job.Name
 		if job.Name == "plan" {
@@ -27,14 +41,23 @@ func approve(stdin *bufio.Reader, stdout io.Writer, job protocol.Job, jobs []pre
 		_, _ = fmt.Fprintf(stdout, "Job %s from the agent: %s\n\n", visible(job.ID), visible(title))
 		for i, p := range jobs {
 			marker := " "
-			if p.sensitive {
+			switch {
+			case p.sensitive:
 				marker = "!"
+			case p.widening:
+				marker = "+"
 			}
 			_, _ = fmt.Fprintf(stdout, "  %d  %-10s%s %s", i+1, p.job.Name, marker, visible(p.target))
 			if p.description != "" {
 				_, _ = fmt.Fprintf(stdout, "  %s", visible(p.description))
 			}
 			_, _ = fmt.Fprintln(stdout)
+		}
+		if len(widenings) > 0 {
+			_, _ = fmt.Fprintf(stdout, "\nOutside the scope (%s). Approving adds these directories\nto the scope until the session ends:\n\n", visible(strings.Join(scope, ", ")))
+			for _, w := range widenings {
+				_, _ = fmt.Fprintf(stdout, "  row %d  %s\n", w.row, visible(w.note()))
+			}
 		}
 		_, _ = fmt.Fprint(stdout, "\n[a] approve   [d] deny   [v] view params\n>\n")
 		for {

@@ -27,18 +27,42 @@ func TestApprovalScreen(t *testing.T) {
 		"  4  read_file ! /srv/app/.env  lines 1-50\n\n[a] approve   [d] deny   [v] view params\n>\n"
 	for _, input := range []string{"a\n", "d\n"} {
 		var out bytes.Buffer
-		ok, err := approve(bufio.NewReader(strings.NewReader(input)), &out, job("j7", "plan", protocol.PlanParams{}), rows, 40)
+		ok, err := approve(bufio.NewReader(strings.NewReader(input)), &out, job("j7", "plan", protocol.PlanParams{}), rows, nil, nil, 40)
 		if err != nil || ok != (input == "a\n") || out.String() != want {
 			t.Fatalf("approved %v, %v, screen:\n%s", ok, err, &out)
 		}
 	}
 	var out bytes.Buffer
-	ok, err := approve(bufio.NewReader(strings.NewReader("v\na\n")), &out, job("j7", "read_file", protocol.ReadFileParams{Path: "/var/log/a"}), rows[:1], 40)
+	ok, err := approve(bufio.NewReader(strings.NewReader("v\na\n")), &out, job("j7", "read_file", protocol.ReadFileParams{Path: "/var/log/a"}), rows[:1], nil, nil, 40)
 	if err != nil || !ok || strings.Count(out.String(), "Job j7 from the agent: read_file") != 2 || !strings.Contains(out.String(), "{\n  \"path\": \"/var/log/a\"\n}") {
 		t.Fatal(ok, err, out.String())
 	}
-	if _, err := approve(bufio.NewReader(strings.NewReader("")), &out, job("j7", "read_file", nil), rows[:1], 40); err == nil {
+	if _, err := approve(bufio.NewReader(strings.NewReader("")), &out, job("j7", "read_file", nil), rows[:1], nil, nil, 40); err == nil {
 		t.Fatal("ignored EOF")
+	}
+}
+
+func TestApprovalScreenWidening(t *testing.T) {
+	rows := []preparedJob{
+		{job: protocol.Job{Name: "read_file"}, target: "/var/log/app.log", description: "lines 1-200"},
+		{job: protocol.Job{Name: "list_dir"}, target: "/srv/app/logs", widening: true},
+		{job: protocol.Job{Name: "read_file"}, target: "/srv/app/.env", description: "lines 1-50", sensitive: true, widening: true},
+	}
+	widenings := []widening{{row: 2, dirs: []string{"/srv/app/logs"}}, {row: 3, dirs: []string{"/srv/app", "/data/app"}}}
+	want := "Job j7 from the agent: plan of 3 reads\n\n" +
+		"  1  read_file   /var/log/app.log  lines 1-200\n" +
+		"  2  list_dir  + /srv/app/logs\n" +
+		"  3  read_file ! /srv/app/.env  lines 1-50\n" +
+		"\nOutside the scope (/var/log). Approving adds these directories\nto the scope until the session ends:\n\n" +
+		"  row 2  /srv/app/logs\n" +
+		"  row 3  /srv/app (resolves to /data/app)\n" +
+		"\n[a] approve   [d] deny   [v] view params\n>\n"
+	for _, input := range []string{"a\n", "d\n"} {
+		var out bytes.Buffer
+		ok, err := approve(bufio.NewReader(strings.NewReader(input)), &out, job("j7", "plan", protocol.PlanParams{}), rows, widenings, []string{"/var/log"}, 40)
+		if err != nil || ok != (input == "a\n") || out.String() != want {
+			t.Fatalf("approved %v, %v, screen:\n%s", ok, err, &out)
+		}
 	}
 }
 func TestApprovalResolvedPaths(t *testing.T) {
@@ -53,7 +77,7 @@ func TestApprovalResolvedPaths(t *testing.T) {
 		}
 		var out bytes.Buffer
 		input := "v\n" + strings.Repeat("\n", 20) + "a\n"
-		ok, err := approve(bufio.NewReader(strings.NewReader(input)), &out, job("j1", name, map[string]any{}), rows, 10)
+		ok, err := approve(bufio.NewReader(strings.NewReader(input)), &out, job("j1", name, map[string]any{}), rows, nil, nil, 10)
 		if err != nil || !ok || strings.Count(out.String(), "-- more: Enter, q to stop --") != 20 {
 			t.Fatalf("paged approval: %v, %v, %s", ok, err, &out)
 		}

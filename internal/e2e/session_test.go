@@ -63,26 +63,51 @@ func TestLiveSession(t *testing.T) {
 		}
 		h.out.until(t, "14:00:00Z  list_dir "+h.options.Allow[0]+"  denied: denied by user\n")
 
-		t.Log("4. Reject an outside-scope file without prompting")
-		outside := filepath.Join(t.TempDir(), "outside.log")
-		writeSessionFile(t, outside, "must never be sent\n")
-		checkLiveResult(t, h.call(t, cs, "read_file", map[string]any{"path": outside})(), "rejected: outside the scope\n", liveMeta("j3", "rejected", 0, 0, 0, "", "outside the scope"))
-		noApproval(t, h.out.until(t, "14:00:00Z  read_file "+outside+"  rejected: outside the scope\n"))
+		t.Log("4. Reject an outside-scope path whose directory cannot be added, without prompting")
+		outsideDir := t.TempDir()
+		outside := filepath.Join(outsideDir, "outside.log")
+		writeSessionFile(t, outside, "request from 203.0.113.7\n")
+		scope := "/var/log, " + h.options.Allow[0]
+		missing := filepath.Join(outsideDir, "gone", "outside.log")
+		refusal := "outside the session scope (" + scope + "); it cannot be added to the scope: the directory does not exist"
+		checkLiveResult(t, h.call(t, cs, "read_file", map[string]any{"path": missing})(), "rejected: "+refusal+"\n", liveMeta("j3", "rejected", 0, 0, 0, "", refusal))
+		noApproval(t, h.out.until(t, "14:00:00Z  read_file "+missing+"  rejected: "+refusal+"\n"))
 
-		t.Log("5. Approve tail_file, inspect the flagged string, and drop the result")
+		t.Log("5. Decline to add an outside-scope directory on the approval screen")
+		widening := "Job %s from the agent: read_file\n\n  1  read_file + " + outside + "  lines 1-1\n" +
+			"\nOutside the scope (" + scope + "). Approving adds these directories\nto the scope until the session ends:\n\n" +
+			"  row 1  " + outsideDir + "\n" + approvalFooter
+		await = h.call(t, cs, "read_file", map[string]any{"path": outside, "from": 1, "to": 1})
+		h.answer(t, fmt.Sprintf(widening, "j4"), "d")
+		refused := "denied by user; the directory was not added to the scope"
+		checkLiveResult(t, await(), "denied: "+refused+"\n", liveMeta("j4", "denied", 0, 0, 0, "", refused))
+		h.out.until(t, "14:00:00Z  read_file "+outside+"  denied: "+refused+"\n")
+		if _, err := os.Stat(filepath.Join(h.auditPath, "results", "5.txt")); err != nil {
+			t.Fatal("the declined read has no audit copy", err)
+		}
+
+		t.Log("6. Add the directory on the approval screen and read the file under the widened scope")
+		await = h.call(t, cs, "read_file", map[string]any{"path": outside, "from": 1, "to": 1})
+		h.answer(t, fmt.Sprintf(widening, "j5"), "a")
+		h.scope = append(h.scope, outsideDir)
+		checkLiveResult(t, await(), "1: request from <ip#1>\n", liveMeta("j5", "ok", 1, 1, 0, "", ""))
+		h.out.until(t, "14:00:00Z  scope    "+outsideDir+" added for this session\n")
+		h.out.until(t, "14:00:00Z  read_file "+outside+"  1 lines sent, 1 redacted (ip 1 values), 0 flags\n")
+
+		t.Log("7. Approve tail_file, inspect the flagged string, and drop the result")
 		await = h.call(t, cs, "tail_file", map[string]any{"path": h.flagPath, "n": 1})
-		h.answer(t, "Job j4 from the agent: tail\n\n  1  tail        "+h.flagPath+"  last 1 lines\n"+approvalFooter, "a")
+		h.answer(t, "Job j6 from the agent: tail\n\n  1  tail        "+h.flagPath+"  last 1 lines\n"+approvalFooter, "a")
 		h.answer(t, "14:00:00Z  tail "+h.flagPath+"  1 lines, 1 strings to inspect\n  flagged.log:2 ! "+flaggedValue+"\n[s] send   [d] drop\n>\n", "d")
-		checkLiveResult(t, await(), "denied: dropped after review\n", liveMeta("j4", "denied", 0, 0, 0, "", "dropped after review"))
+		checkLiveResult(t, await(), "denied: dropped after review\n", liveMeta("j6", "denied", 0, 0, 0, "", "dropped after review"))
 		h.out.until(t, "14:00:00Z  tail "+h.flagPath+"  denied: dropped after review\n")
 
-		t.Log("6. Page search_files across two results with stable placeholders")
+		t.Log("8. Page search_files across two results with stable placeholders")
 		var pages []string
 		cursor := ""
 		for i, line := range []int{1, 3} {
 			args := map[string]any{"glob": h.path, "regex": "request from", "max": 1, "cursor": cursor}
 			await = h.call(t, cs, "search_files", args)
-			h.answer(t, fmt.Sprintf("Job j%d from the agent: search\n\n  1  search      %s  regex request from  1 files; first: %s\n", i+5, h.path, h.path)+approvalFooter, "a")
+			h.answer(t, fmt.Sprintf("Job j%d from the agent: search\n\n  1  search      %s  regex request from  1 files; first: %s\n", i+7, h.path, h.path)+approvalFooter, "a")
 			got := await()
 			meta := liveMetadata(t, got.Content[1])
 			next, ok := meta["next"].(string)
@@ -90,30 +115,31 @@ func TestLiveSession(t *testing.T) {
 				t.Fatalf("page %d next = %v", i+1, meta["next"])
 			}
 			pages = append(pages, fmt.Sprintf("%s:%d: request from <ip#1>\n", h.path, line))
-			checkLiveResult(t, got, pages[i], liveMeta(fmt.Sprintf("j%d", i+5), "ok", 1, 1, 0, next, ""))
+			checkLiveResult(t, got, pages[i], liveMeta(fmt.Sprintf("j%d", i+7), "ok", 1, 1, 0, next, ""))
 			cursor = next
 			h.out.until(t, "14:00:00Z  search "+h.path+"  1 lines sent, 1 redacted (ip 1 values), 0 flags\n")
 		}
 		stored, err := session.Load(h.sessionPath)
-		if err != nil || stored.NextJobSeq != 7 || stored.NextResultSeq != 9 {
+		if err != nil || stored.NextJobSeq != 9 || stored.NextResultSeq != 11 {
 			t.Fatalf("persisted counters: job=%d result=%d err=%v", stored.NextJobSeq, stored.NextResultSeq, err)
 		}
 
-		t.Log("7. End through DeleteSession and check the audit copy and summary")
-		h.end(t, "8 jobs, 3 sent, 4 denied, 1 rejected", "")
-		if strings.Count(h.out.text.String(), "\n>\n") != 6 {
+		t.Log("9. End through DeleteSession and check the audit copy and summary")
+		h.end(t, "10 jobs, 4 sent, 5 denied, 1 rejected", "")
+		if strings.Count(h.out.text.String(), "\n>\n") != 8 {
 			t.Fatal("unexpected number of approval and review prompts")
 		}
-		h.checkAudit(t, []string{read, "", "", "", "", "", pages[0], pages[1]}, map[string][]string{
+		h.checkAudit(t, []string{read, "", "", "", "", "", "1: request from <ip#1>\n", "", pages[0], pages[1]}, map[string][]string{
 			"j1":   {"received", "approved", "sent"},
 			"j2.1": {"received", "denied", "sent"}, "j2.2": {"received", "denied", "sent"}, "j2.3": {"received", "denied", "sent"},
-			"j3": {"received", "rejected", "sent"}, "j4": {"received", "approved", "dropped", "sent"},
-			"j5": {"received", "approved", "sent"}, "j6": {"received", "approved", "sent"},
+			"j3": {"received", "rejected", "sent"}, "j4": {"received", "denied", "sent"},
+			"j5": {"received", "scope-added", "approved", "sent"}, "j6": {"received", "approved", "dropped", "sent"},
+			"j7": {"received", "approved", "sent"}, "j8": {"received", "approved", "sent"},
 		})
 	})
 
 	t.Run("level 0", func(t *testing.T) {
-		t.Log("8. Run file jobs and available df and ps tools without prompts")
+		t.Log("10. Run file jobs and available df and ps tools without prompts")
 		h := newLiveSession(t, 0)
 		cs := connect(t, &akenmcp.Server{SessionPath: h.sessionPath, Version: "test", Now: h.options.Now})
 		read := "1: request from <ip#1>\n2: request completed\n3: request from <ip#1>\n"
@@ -286,6 +312,7 @@ type liveSession struct {
 	id                     protocol.SessionID
 	keys                   protocol.SessionKeys
 	stored                 session.Session
+	scope                  []any
 }
 
 func newLiveSession(t *testing.T, level int) *liveSession {
@@ -338,6 +365,7 @@ func newLiveSession(t *testing.T, level int) *liveSession {
 	defer token.Zero()
 	h.id = token.SessionID()
 	h.auditPath = filepath.Join(state, "sessions", "20260913T140000Z-"+h.id.String()[:8])
+	h.scope = []any{"/var/log", dir}
 	want := fmt.Sprintf("aken serve: session open on %s, level %d, expires 2026-09-13T15:00:00Z\nScope    /var/log, %s\nLocal    %s\nRedaction   14 rules (14 default, 0 from %s); kept: %s\n\nSession token. Paste it into `aken-mcp join` on your machine, not into the agent chat:\n\n  %s\n\nWaiting for the local MCP to join. Ctrl-C ends the session.\n", server.URL, level, dir, h.auditPath, rules, h.path, tokens[0])
 	if opening != want {
 		t.Fatalf("opening = %q, want %q", opening, want)
@@ -594,7 +622,7 @@ func (h *liveSession) checkAudit(t *testing.T, results []string, events map[stri
 	if err := json.Unmarshal([]byte(files["session.json"]), &info); err != nil {
 		t.Fatal(err)
 	}
-	wantInfo := map[string]any{"session_id": h.id.String(), "relay": h.options.RelayURL, "level": float64(h.options.Level), "created_at": "2026-09-13T14:00:00Z", "expires_at": "2026-09-13T15:00:00Z", "joined_at": "2026-09-13T14:00:00Z", "joined_via": "cli", "ended_at": "2026-09-13T14:00:00Z", "argv": []any{"serve"}}
+	wantInfo := map[string]any{"session_id": h.id.String(), "relay": h.options.RelayURL, "level": float64(h.options.Level), "created_at": "2026-09-13T14:00:00Z", "expires_at": "2026-09-13T15:00:00Z", "joined_at": "2026-09-13T14:00:00Z", "joined_via": "cli", "scope": h.scope, "ended_at": "2026-09-13T14:00:00Z", "argv": []any{"serve"}}
 	if !reflect.DeepEqual(info, wantInfo) {
 		t.Errorf("session.json=%v, want %v", info, wantInfo)
 	}

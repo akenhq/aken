@@ -4,6 +4,7 @@ package serve
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -345,6 +346,86 @@ func TestJournalPagesBeyondEightMiB(t *testing.T) {
 		lines, next, err := journal(context.Background(), p)
 		if err != nil || next != tt.next || len(lines) != 1 || lines[0] != tt.want {
 			t.Fatalf("cursor %s: %d lines, next %q, error %v", tt.cursor, len(lines), next, err)
+		}
+	}
+}
+
+func TestScopeRefusal(t *testing.T) {
+	dir, outside := t.TempDir(), t.TempDir()
+	path := filepath.Join(outside, "app.log")
+	if err := os.WriteFile(path, []byte("ordinary\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	files := source.Files{Allowed: []string{dir}}
+	for _, tt := range []struct {
+		name   string
+		params any
+		dir    string
+	}{
+		{"read_file", protocol.ReadFileParams{Path: path}, outside},
+		{"tail", protocol.TailParams{Path: path}, outside},
+		{"list_dir", protocol.ListDirParams{Path: outside}, outside},
+		{"search", protocol.SearchParams{Glob: filepath.Join(outside, "*.log"), Regex: "a"}, outside},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := prepare(context.Background(), job("j1", tt.name, tt.params), 1, files, time.Now())
+			var scoped *scopeError
+			if !errors.As(err, &scoped) || scoped.dir != tt.dir {
+				t.Fatalf("error = %v, want the scope refusal for %s", err, tt.dir)
+			}
+			if err.Error() != "outside the session scope ("+dir+")" {
+				t.Fatalf("message = %q", err)
+			}
+			// The row keeps the requested path so the approval screen can name it.
+			if want := fmt.Sprint(reflect.ValueOf(tt.params).Field(0)); p.target != want {
+				t.Fatalf("target = %q, want %q", p.target, want)
+			}
+		})
+	}
+	// A link that leaves the scope is refused outright, never offered for approval.
+	var scoped *scopeError
+	_, err := prepare(context.Background(), job("j1", "read_file", protocol.ReadFileParams{Path: filepath.Join(dir, "escape", "app.log")}), 1, files, time.Now())
+	if err == nil || errors.As(err, &scoped) {
+		t.Fatalf("link escape = %v", err)
+	}
+}
+
+func TestScopeGrant(t *testing.T) {
+	dir := t.TempDir()
+	logs := filepath.Join(dir, "logs")
+	if err := os.Mkdir(logs, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(logs, link); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "app.log")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		dir  string
+		want []string
+		bad  string
+	}{
+		{dir: logs, want: []string{logs}},
+		{dir: link, want: []string{link, logs}},
+		{dir: file, bad: "it is not a directory"},
+		{dir: filepath.Join(dir, "gone"), bad: "the directory does not exist"},
+	} {
+		dirs, err := scopeGrant(tt.dir)
+		if tt.bad != "" {
+			if err == nil || err.Error() != tt.bad {
+				t.Fatalf("%s: err = %v, want %q", tt.dir, err, tt.bad)
+			}
+			continue
+		}
+		if err != nil || !reflect.DeepEqual(dirs, tt.want) {
+			t.Fatalf("%s: %v, %v", tt.dir, dirs, err)
 		}
 	}
 }
