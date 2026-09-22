@@ -122,6 +122,8 @@ run_case 2 bash "$dist/install.sh" --once --uninstall
 printf '%s\n' 'ok: uninstall requires root and purge requires uninstall'
 
 # Redirect installation paths and stub account operations so these cases need no root.
+# The stubs run inside the script under test through export -f.
+# shellcheck disable=SC2317
 (
   test_root="$test_dir/root"
   export test_root

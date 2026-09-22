@@ -112,7 +112,11 @@ func fakeCollector(t *testing.T, s *Server, client *protocol.RelayClient, keys p
 						err = client.PostResult(ctx, id, sealed)
 					}
 					if err != nil {
-						t.Errorf("collector result: %v", err)
+						// The MCP can read a result before its POST returns here, so the test may
+						// already be over and have canceled ctx.
+						if ctx.Err() == nil {
+							t.Errorf("collector result: %v", err)
+						}
 						return
 					}
 					resultSeq++
