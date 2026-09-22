@@ -2,7 +2,6 @@
 package screen
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"strconv"
@@ -52,7 +51,7 @@ func Visible(line []byte) string {
 	}
 	return out.String()
 }
-func Page(stdin *bufio.Reader, stdout io.Writer, lines []string, pageLines int) error {
+func Page(stdin *Input, stdout io.Writer, lines []string, pageLines int) error {
 	if pageLines <= 0 {
 		pageLines = 40
 	}
@@ -60,11 +59,11 @@ func Page(stdin *bufio.Reader, stdout io.Writer, lines []string, pageLines int) 
 		_, _ = fmt.Fprintln(stdout, line)
 		if (i+1)%pageLines == 0 && i+1 < len(lines) {
 			_, _ = fmt.Fprintln(stdout, "-- more: Enter, q to stop --")
-			input, err := stdin.ReadString('\n')
+			key, err := stdin.Key()
 			if err != nil {
 				return err
 			}
-			if strings.TrimSpace(input) == "q" {
+			if key == 'q' {
 				return nil
 			}
 		}

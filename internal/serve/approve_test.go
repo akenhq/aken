@@ -2,7 +2,6 @@
 package serve
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
 	"strings"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"github.com/akenhq/aken/internal/redact"
+	"github.com/akenhq/aken/internal/screen"
 	"github.com/akenhq/aken/protocol"
 )
 
@@ -27,17 +27,17 @@ func TestApprovalScreen(t *testing.T) {
 		"  4  read_file ! /srv/app/.env  lines 1-50\n\n[a] approve   [d] deny   [v] view params\n>\n"
 	for _, input := range []string{"a\n", "d\n"} {
 		var out bytes.Buffer
-		ok, err := approve(bufio.NewReader(strings.NewReader(input)), &out, job("j7", "plan", protocol.PlanParams{}), rows, 40)
+		ok, err := approve(screen.NewInput(strings.NewReader(input), -1, false), &out, job("j7", "plan", protocol.PlanParams{}), rows, 40)
 		if err != nil || ok != (input == "a\n") || out.String() != want {
 			t.Fatalf("approved %v, %v, screen:\n%s", ok, err, &out)
 		}
 	}
 	var out bytes.Buffer
-	ok, err := approve(bufio.NewReader(strings.NewReader("v\na\n")), &out, job("j7", "read_file", protocol.ReadFileParams{Path: "/var/log/a"}), rows[:1], 40)
+	ok, err := approve(screen.NewInput(strings.NewReader("v\na\n"), -1, false), &out, job("j7", "read_file", protocol.ReadFileParams{Path: "/var/log/a"}), rows[:1], 40)
 	if err != nil || !ok || strings.Count(out.String(), "Job j7 from the agent: read_file") != 2 || !strings.Contains(out.String(), "{\n  \"path\": \"/var/log/a\"\n}") {
 		t.Fatal(ok, err, out.String())
 	}
-	if _, err := approve(bufio.NewReader(strings.NewReader("")), &out, job("j7", "read_file", nil), rows[:1], 40); err == nil {
+	if _, err := approve(screen.NewInput(strings.NewReader(""), -1, false), &out, job("j7", "read_file", nil), rows[:1], 40); err == nil {
 		t.Fatal("ignored EOF")
 	}
 }
@@ -53,7 +53,7 @@ func TestApprovalResolvedPaths(t *testing.T) {
 		}
 		var out bytes.Buffer
 		input := "v\n" + strings.Repeat("\n", 20) + "a\n"
-		ok, err := approve(bufio.NewReader(strings.NewReader(input)), &out, job("j1", name, map[string]any{}), rows, 10)
+		ok, err := approve(screen.NewInput(strings.NewReader(input), -1, false), &out, job("j1", name, map[string]any{}), rows, 10)
 		if err != nil || !ok || strings.Count(out.String(), "-- more: Enter, q to stop --") != 20 {
 			t.Fatalf("paged approval: %v, %v, %s", ok, err, &out)
 		}
@@ -77,7 +77,7 @@ func TestFlagReview(t *testing.T) {
 	flags := []redact.Flag{{Line: 1}, {Line: 1}, {Line: 2, IDShaped: true}}
 	for _, input := range []string{"s\n", "d\n"} {
 		var out bytes.Buffer
-		ok, err := reviewFlags(bufio.NewReader(strings.NewReader(input)), &out, p, r, flags, time.Date(2026, 9, 13, 14, 2, 7, 0, time.UTC))
+		ok, err := reviewFlags(screen.NewInput(strings.NewReader(input), -1, false), &out, p, r, flags, time.Date(2026, 9, 13, 14, 2, 7, 0, time.UTC))
 		if err != nil || ok != (input == "s\n") || strings.Count(out.String(), "app.log:41 !") != 1 || strings.Contains(out.String(), "42") || !strings.Contains(out.String(), `\x1b[2J\u{202e}\xff`) {
 			t.Fatal(ok, err, out.String())
 		}

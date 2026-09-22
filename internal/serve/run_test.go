@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/akenhq/aken/internal/screen"
 	"github.com/akenhq/aken/protocol"
 	"github.com/akenhq/aken/relay"
 )
@@ -73,7 +74,7 @@ func startLive(t *testing.T, level int, input io.Reader, ttl time.Duration) *liv
 	o := Options{Level: level, TTL: ttl, RelayURL: server.URL, Allow: []string{dir}, StateDir: t.TempDir(), Now: time.Now, Argv: []string{"serve"}}
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &liveTest{o: o, out: newOutput(), errs: newOutput(), ctx: ctx, cancel: cancel, done: make(chan int, 1), jobSeq: 1, resultSeq: 1}
-	go func() { h.done <- Run(ctx, o, input, h.out, h.errs, 40) }()
+	go func() { h.done <- Run(ctx, o, screen.NewInput(input, -1, true), h.out, h.errs, 40) }()
 	t.Cleanup(func() {
 		if !h.stopped {
 			h.stop(t)
@@ -435,7 +436,7 @@ func TestUnsupportedRelayAndOptions(t *testing.T) {
 	defer server.Close()
 	o := Options{TTL: time.Hour, RelayURL: server.URL, StateDir: t.TempDir()}
 	var out, errs bytes.Buffer
-	if code := Run(context.Background(), o, strings.NewReader(""), &out, &errs, 40); code != 1 || !strings.Contains(errs.String(), "does not support live sessions") || out.Len() != 0 {
+	if code := Run(context.Background(), o, screen.NewInput(strings.NewReader(""), -1, true), &out, &errs, 40); code != 1 || !strings.Contains(errs.String(), "does not support live sessions") || out.Len() != 0 {
 		t.Fatalf("code %d, %s %s", code, &out, &errs)
 	}
 	for _, change := range []func(*Options){func(o *Options) { o.Level = 2 }, func(o *Options) { o.TTL = 0 }, func(o *Options) { o.TTL = 25 * time.Hour }, func(o *Options) { o.Retention = -1 }, func(o *Options) { o.Allow = []string{"relative"} }, func(o *Options) { o.RelayURL = "bad" }} {

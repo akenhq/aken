@@ -16,6 +16,7 @@ import (
 
 	"github.com/akenhq/aken/internal/collect"
 	akenmcp "github.com/akenhq/aken/internal/mcp"
+	"github.com/akenhq/aken/internal/screen"
 	"github.com/akenhq/aken/internal/session"
 	"github.com/akenhq/aken/protocol"
 	"github.com/akenhq/aken/relay"
@@ -64,7 +65,7 @@ func TestOneShot(t *testing.T) {
 		TTL: time.Hour, StateDir: state, Retention: 0,
 		Since: now.Add(-time.Hour), Until: now, Now: func() time.Time { return now },
 		Collector: "test",
-	}, strings.NewReader("s\n"), &stdout, &stderr, true, 40)
+	}, screen.NewInput(strings.NewReader("s\n"), -1, true), &stdout, &stderr, 40)
 	if code != 0 {
 		t.Fatalf("collect exit = %d, stderr = %q", code, stderr.String())
 	}

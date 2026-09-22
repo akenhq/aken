@@ -14,6 +14,7 @@ import (
 
 	"github.com/akenhq/aken/internal/buildinfo"
 	"github.com/akenhq/aken/internal/collect"
+	"github.com/akenhq/aken/internal/screen"
 	"github.com/akenhq/aken/internal/serve"
 	"github.com/akenhq/aken/internal/source"
 	"github.com/akenhq/aken/protocol"
@@ -68,6 +69,15 @@ T is a duration before now (30m, 2h, 3d), an RFC 3339 time (2026-09-12T10:00:00Z
 `
 
 var geteuid = os.Geteuid // replaced in tests
+
+// pageLines keeps one page of a long listing inside the window, leaving room
+// for the prompt that follows it.
+func pageLines() int {
+	if _, height, err := term.GetSize(int(os.Stdout.Fd())); err == nil && height > 2 {
+		return height - 2
+	}
+	return 40
+}
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
@@ -172,12 +182,8 @@ func runCollect(args []string, stdout, stderr io.Writer) int {
 	}
 	o.Argv = args
 	o.Collector = buildinfo.String("aken")
-	interactive := term.IsTerminal(int(os.Stdin.Fd()))
-	pageLines := 40
-	if _, height, err := term.GetSize(int(os.Stdout.Fd())); err == nil && height > 2 {
-		pageLines = height - 2
-	}
-	return collect.Run(context.Background(), o, os.Stdin, stdout, stderr, interactive, pageLines)
+	stdin := screen.NewInput(os.Stdin, int(os.Stdin.Fd()), term.IsTerminal(int(os.Stdin.Fd())))
+	return collect.Run(context.Background(), o, stdin, stdout, stderr, pageLines())
 }
 
 const serveUsage = `Usage: aken serve [flags]
@@ -252,11 +258,8 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}
 	o.Argv = args
 	o.Collector = buildinfo.String("aken")
-	pageLines := 40
-	if _, height, err := term.GetSize(int(os.Stdout.Fd())); err == nil && height > 2 {
-		pageLines = height - 2
-	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	return serve.Run(ctx, o, os.Stdin, stdout, stderr, pageLines)
+	stdin := screen.NewInput(os.Stdin, int(os.Stdin.Fd()), true)
+	return serve.Run(ctx, o, stdin, stdout, stderr, pageLines())
 }

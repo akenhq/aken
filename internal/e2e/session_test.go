@@ -18,6 +18,7 @@ import (
 	"time"
 
 	akenmcp "github.com/akenhq/aken/internal/mcp"
+	"github.com/akenhq/aken/internal/screen"
 	"github.com/akenhq/aken/internal/serve"
 	"github.com/akenhq/aken/internal/session"
 	"github.com/akenhq/aken/internal/source"
@@ -312,7 +313,7 @@ func newLiveSession(t *testing.T, level int) *liveSession {
 	h.out, h.errs = out, errs
 	go func() {
 		defer close(h.done)
-		h.code = serve.Run(ctx, h.options, in, stdout, stderr, 40)
+		h.code = serve.Run(ctx, h.options, screen.NewInput(in, -1, true), stdout, stderr, 40)
 		_ = stdout.Close()
 		_ = stderr.Close()
 	}()

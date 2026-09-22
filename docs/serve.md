@@ -128,11 +128,17 @@ For a single job, the first line is `Job j7 from the agent: read_file` and
 the list has one row. Search rows show the glob, regex, and file count, such
 as `12 files`, followed by `; first: a, b, c and 9 more`.
 
-| Input | Action |
+| Key | Action |
 |---|---|
 | `a` | Approve the job or every job in the plan |
 | `d` | Deny the job or every job in the plan |
 | `v` | Show the raw parameters and return to the prompt |
+
+The key acts as soon as it is pressed; there is nothing to confirm with Enter.
+The action is echoed after the `>` marker, and a key that is not offered does
+nothing. Keystrokes that ran past `v` output are dropped when the screen asks
+again, so paging through parameters does not spill into the answer. Ctrl-C at
+a prompt ends the session, as it does anywhere else.
 
 The collector marks these sensitive paths:
 
@@ -168,7 +174,7 @@ same flags shown by `f` in collect, excluding hex IDs or hashes:
 >
 ```
 
-Enter `s` to send or `d` to drop. Dropping sends a `denied` result with error
+Press `s` to send or `d` to drop. Dropping sends a `denied` result with error
 `dropped after review`. At level 0, the summary names the flag count and does
 not wait. A result with no flags can still contain sensitive data.
 
@@ -262,6 +268,10 @@ Press Ctrl-C in the server terminal, or run this on your machine:
 ```sh
 aken-mcp end
 ```
+
+At an approval or review prompt the terminal is in raw mode, so Ctrl-C reaches
+the collector as a keystroke rather than as a signal. It ends the session the
+same way, after printing `Ctrl-C: ending the session.`.
 
 The collector also ends on expiry or a relay 404 or 409, including when the
 MCP ends the session or the relay loses it. It deletes the relay session,

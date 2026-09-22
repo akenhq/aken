@@ -2,7 +2,7 @@
 package collect
 
 import (
-	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -134,34 +134,36 @@ func renderScreen(w io.Writer, s screenData) {
 		retention = fmt.Sprintf("kept %g days", s.options.Retention.Hours()/24)
 	}
 	_, _ = fmt.Fprintf(w, "Local    %s/ (%s; includes the placeholder mapping)\n\n", filepath.Join(s.options.StateDir, "runs"), retention)
-	if s.options.DryRun {
-		_, _ = fmt.Fprint(w, "[v] view everything   [f] view flagged lines   [q] quit\n>\n")
-	} else {
-		_, _ = fmt.Fprint(w, "[s] send   [v] view everything   [f] view flagged lines   [a] abort\n>\n")
-	}
+	screen.Choices(w, reviewChoices(s.options.DryRun))
 }
-func review(stdin *bufio.Reader, stdout io.Writer, s screenData, dryRun bool, pageLines int) (rune, error) {
+
+// reviewChoices lists the keys the review screen takes. A dry run has nothing
+// to send or abort, so it offers neither.
+func reviewChoices(dryRun bool) []screen.Choice {
+	view := screen.Choice{Key: 'v', Label: "view everything"}
+	flagged := screen.Choice{Key: 'f', Label: "view flagged lines"}
+	if dryRun {
+		return []screen.Choice{view, flagged, {Key: 'q', Label: "quit"}}
+	}
+	return []screen.Choice{{Key: 's', Label: "send"}, view, flagged, {Key: 'a', Label: "abort"}}
+}
+func review(stdin *screen.Input, stdout io.Writer, s screenData, dryRun bool, pageLines int) (rune, error) {
+	choices := reviewChoices(dryRun)
 	renderScreen(stdout, s)
 	for {
-		input, err := stdin.ReadString('\n')
+		key, err := screen.Ask(stdin, stdout, choices)
+		if errors.Is(err, screen.ErrInterrupted) {
+			// Raw mode swallows the signal; Ctrl-C still means stop here.
+			return 'a', nil
+		}
 		if err != nil {
 			return 0, err
 		}
-		switch strings.TrimSpace(input) {
-		case "s":
-			if !dryRun {
-				return 's', nil
-			}
-		case "a":
-			if !dryRun {
-				return 'a', nil
-			}
-		case "q":
-			if dryRun {
-				return 'q', nil
-			}
-		case "v", "f":
-			flaggedOnly := strings.TrimSpace(input) == "f"
+		switch key {
+		case 's', 'a', 'q':
+			return key, nil
+		case 'v', 'f':
+			flaggedOnly := key == 'f'
 			var lines []string
 			for _, src := range s.sources {
 				flagged := map[int]bool{}
@@ -184,9 +186,11 @@ func review(stdin *bufio.Reader, stdout io.Writer, s screenData, dryRun bool, pa
 			if flaggedOnly && len(lines) == 0 {
 				_, _ = fmt.Fprintln(stdout, "no flagged lines")
 			} else if err := screen.Page(stdin, stdout, lines, pageLines); err != nil {
+				if errors.Is(err, screen.ErrInterrupted) {
+					return 'a', nil
+				}
 				return 0, err
 			}
 		}
-		_, _ = fmt.Fprint(stdout, ">\n")
 	}
 }

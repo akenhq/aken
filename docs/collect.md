@@ -118,6 +118,12 @@ Local    /var/lib/aken/runs/ (kept 30 days; includes the placeholder mapping)
 >
 ```
 
+Press the key for the choice; it acts at once, with no Enter. The chosen
+action is echoed after the `>` marker, and a key that is not offered does
+nothing. Keystrokes that ran past a listing are dropped when the next screen
+asks, so scrolling through the viewer does not spill into the answer. Ctrl-C
+aborts.
+
 Choose **view everything** to inspect the artifact and **view flagged lines**
 to inspect possible missed values other than hex IDs or UUIDs. Choose **send**
 only when you are ready to share the reviewed content. Choose **abort** to stop
@@ -178,14 +184,18 @@ only lines with strings to inspect, or `v` to view everything.
 The viewer prints one screen at a time (the terminal height, or 40 lines when
 it cannot be read) as `<source>:<line> | <text>`. Flagged
 lines use `!` instead of `|`. At `-- more: Enter, q to stop --`, press Enter
-for more lines or `q` to stop viewing.
+or any other key for more lines, or `q` to stop viewing.
 
 The gutter (`123 |`, `123 !`) is display only and is not part of the upload.
 The viewer shows control characters, invalid bytes and bidirectional-text controls as escapes such as \x1b or \u{202e}; the upload keeps the original bytes.
 Redaction can miss sensitive data; see [Redaction](redaction.md).
 
 Interactive input requires stdin to be a terminal. A real run without one
-exits 1 with `aken: the review screen needs a terminal`.
+exits 1 with `aken: the review screen needs a terminal`. When stdin is a
+terminal, the collector switches it to raw mode for the length of a single
+keypress and restores it afterwards; when the terminal refuses raw mode, or
+when stdin is a pipe or a script, answers are read as whole lines instead, one
+choice per line.
 
 ## Dry run
 
