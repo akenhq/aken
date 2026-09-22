@@ -123,7 +123,7 @@ func TestApprovalResolvedPaths(t *testing.T) {
 
 func TestFlagReview(t *testing.T) {
 	p := preparedJob{job: protocol.Job{Name: "tail"}, target: "/var/log/app/app.log"}
-	r := protocol.Result{Lines: []string{"41: \x1b[2J‮\xff flagged", "42: hex"}, Redaction: protocol.ResultRedaction{Flags: 1}}
+	r := protocol.Result{Lines: []string{"41: \x1b[2J\u202e\xff flagged", "42: hex"}, Redaction: protocol.ResultRedaction{Flags: 1}}
 	flags := []redact.Flag{{Line: 1}, {Line: 1}, {Line: 2, IDShaped: true}}
 	for _, input := range []string{"s\n", "d\n"} {
 		var out bytes.Buffer
