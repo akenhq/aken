@@ -270,6 +270,8 @@ Each file is written once, then set to mode `0400`.
 
 `mapping.json` holds the original values, including sensitive values removed
 from the artifact. Protect the directory as you protect the source logs.
+To look up a placeholder's original value, run `sudo aken reveal`; see
+[Redaction](redaction.md#looking-up-original-values).
 The collector does not write the token into any of these files.
 
 | Flag | Meaning |

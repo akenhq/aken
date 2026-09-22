@@ -264,6 +264,8 @@ The collector creates this directory with mode `0700`:
 
 The token does not appear in these files. The mapping contains original
 sensitive values. Protect the directory as you protect the source logs.
+To look up a placeholder's original value, run `sudo aken reveal`; see
+[Redaction](redaction.md#looking-up-original-values).
 
 | Flag | Meaning |
 |---|---|
