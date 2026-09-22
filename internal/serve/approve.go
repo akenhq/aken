@@ -17,10 +17,60 @@ import (
 
 func visible(s string) string { return screen.Visible([]byte(s)) }
 
+// verdict is what the person at the terminal answered on the approval screen.
+type verdict int
+
+const (
+	verdictDeny verdict = iota
+	verdictApprove
+	verdictOnce
+)
+
 var approvalChoices = []screen.Choice{{Key: 'a', Label: "approve"}, {Key: 'd', Label: "deny"}, {Key: 'v', Label: "view params"}}
 var flagChoices = []screen.Choice{{Key: 's', Label: "send"}, {Key: 'd', Label: "drop"}}
 
-func approve(stdin *screen.Input, stdout io.Writer, job protocol.Job, jobs []preparedJob, pageLines int) (bool, error) {
+// approvalKeys puts allow once between approve and deny when every row outside
+// the scope can be served by the name it asked for. The key is absent
+// otherwise, so it cannot be pressed where it would mean nothing.
+func approvalKeys(once bool) []screen.Choice {
+	if !once {
+		return approvalChoices
+	}
+	keys := []screen.Choice{approvalChoices[0], {Key: 'o', Label: "allow once"}}
+	return append(keys, approvalChoices[1:]...)
+}
+
+// widening is a row whose path lies outside the scope, with the two grants that
+// would let it run: dirs, added to the scope until the session ends, and paths,
+// the single names this job alone needs. paths is empty when the row cannot be
+// served by names alone, which is why reason then says what it needs instead.
+type widening struct {
+	row         int
+	dirs, paths []string
+	reason      string
+}
+
+// grantNote names a grant, and the path it resolves to when a link makes the two
+// differ, so neither form is a surprise after the answer.
+func grantNote(grant []string) string {
+	if len(grant) > 1 {
+		return grant[0] + " (resolves to " + grant[1] + ")"
+	}
+	return grant[0]
+}
+
+// onceReason returns the reason no row can be allowed once, or "" when every row
+// can be.
+func onceReason(widenings []widening) string {
+	for _, w := range widenings {
+		if len(w.paths) == 0 {
+			return w.reason
+		}
+	}
+	return ""
+}
+
+func approve(stdin *screen.Input, stdout io.Writer, job protocol.Job, jobs []preparedJob, widenings []widening, scope []string, pageLines int) (verdict, error) {
 	for {
 		title := job.Name
 		if job.Name == "plan" {
@@ -29,8 +79,11 @@ func approve(stdin *screen.Input, stdout io.Writer, job protocol.Job, jobs []pre
 		_, _ = fmt.Fprintf(stdout, "Job %s from the agent: %s\n\n", visible(job.ID), visible(title))
 		for i, p := range jobs {
 			marker := " "
-			if p.sensitive {
+			switch {
+			case p.sensitive:
 				marker = "!"
+			case p.widening:
+				marker = "+"
 			}
 			_, _ = fmt.Fprintf(stdout, "  %d  %-10s%s %s", i+1, p.job.Name, marker, visible(p.target))
 			if p.description != "" {
@@ -38,23 +91,41 @@ func approve(stdin *screen.Input, stdout io.Writer, job protocol.Job, jobs []pre
 			}
 			_, _ = fmt.Fprintln(stdout)
 		}
+		once := len(widenings) > 0 && onceReason(widenings) == ""
+		if len(widenings) > 0 {
+			_, _ = fmt.Fprintf(stdout, "\nOutside the scope (%s). Approving adds these directories\nto the scope until the session ends:\n\n", visible(strings.Join(scope, ", ")))
+			for _, w := range widenings {
+				_, _ = fmt.Fprintf(stdout, "  row %d  %s\n", w.row, visible(grantNote(w.dirs)))
+			}
+			if once {
+				_, _ = fmt.Fprint(stdout, "\nAllowing once adds only these paths, and only for this job:\n\n")
+				for _, w := range widenings {
+					_, _ = fmt.Fprintf(stdout, "  row %d  %s\n", w.row, visible(grantNote(w.paths)))
+				}
+			} else {
+				_, _ = fmt.Fprintf(stdout, "\nThis job cannot be allowed once: %s.\n", visible(onceReason(widenings)))
+			}
+		}
 		_, _ = fmt.Fprintln(stdout)
-		screen.Choices(stdout, approvalChoices)
-		key, err := screen.Ask(stdin, stdout, approvalChoices)
+		choices := approvalKeys(once)
+		screen.Choices(stdout, choices)
+		key, err := screen.Ask(stdin, stdout, choices)
 		if err != nil {
-			return false, err
+			return verdictDeny, err
 		}
 		switch key {
 		case 'a':
-			return true, nil
+			return verdictApprove, nil
+		case 'o':
+			return verdictOnce, nil
 		case 'd':
-			return false, nil
+			return verdictDeny, nil
 		}
 		// The params are paged, then the screen is drawn again so the answer
 		// is given to the job description rather than to the last page.
 		var out bytes.Buffer
 		if err := json.Indent(&out, job.Params, "", "  "); err != nil {
-			return false, err
+			return verdictDeny, err
 		}
 		lines := strings.Split(out.String(), "\n")
 		for i, line := range lines {
@@ -67,7 +138,7 @@ func approve(stdin *screen.Input, stdout io.Writer, job protocol.Job, jobs []pre
 			}
 		}
 		if err := screen.Page(stdin, stdout, lines, pageLines); err != nil {
-			return false, err
+			return verdictDeny, err
 		}
 	}
 }

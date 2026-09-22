@@ -27,9 +27,12 @@ aken: refusing to run as root. The installed aken command switches to the aken u
 ```
 
 File jobs must stay under `/var/log` or a directory you add with `--allow DIR`.
-You can repeat `--allow`. The collector resolves canonical paths through
-`os.Root` and refuses symlinks that leave an allowed root. The user must also
-have permission to read the files.
+You can repeat `--allow`. At level 1 you can also grant a directory or a single
+path during the session, from the approval screen; see
+[Paths outside the scope](#paths-outside-the-scope).
+The collector resolves canonical paths through `os.Root` and refuses symlinks
+that leave an allowed root. The user must also have permission to read the
+files.
 
 Command-backed jobs use fixed argument lists and no shell. The collector
 selects `/usr/bin/<name>` or `/bin/<name>`, whichever exists, without a PATH
@@ -101,6 +104,10 @@ Choose the level with `--level N` when you start the session:
 | `1` (default) | Each job or plan on one approval screen | Redacted results without strings to inspect; flagged results pause for send or drop |
 | `0` | Starting the session preapproves every catalog v1 job within the path scope | Every redacted result, including flagged results; the summary shows the flag count |
 
+Only level 1 can grant a directory or a path during the session. At level 0
+the scope stays what you set on the command line, because the preapproval is
+defined by it and there is no approval screen to widen it on.
+
 A session joined through the chat tool runs at level 1 even if you started
 it with `--level 0`. The collector prints:
 
@@ -136,6 +143,7 @@ as `12 files`, followed by `; first: a, b, c and 9 more`.
 | Key | Action |
 |---|---|
 | `a` | Approve the job or every job in the plan |
+| `o` | Approve, granting only the paths and only for this job; offered only when a row lies outside the scope, as [Paths outside the scope](#paths-outside-the-scope) describes |
 | `d` | Deny the job or every job in the plan |
 | `v` | Show the raw parameters and return to the prompt |
 
@@ -153,8 +161,81 @@ The collector marks these sensitive paths:
 - Paths with a `.ssh`, `.gnupg`, or `.aws` component.
 
 The marker asks you to inspect the path. It does not add the path to the
-scope or redact its contents. Unknown jobs, invalid parameters, paths outside
-the scope, and class mismatches are rejected before approval.
+scope or redact its contents. Unknown jobs, invalid parameters, and class
+mismatches are rejected before approval.
+
+## Paths outside the scope
+
+At level 1 a path outside the scope is not refused on its own. The row is
+marked `+`, and the screen names both grants that would let it run before you
+answer:
+
+```text
+Job j3 from the agent: plan of 2 reads
+
+  1  read_file   /var/log/nginx/error.log  lines 1-200
+  2  read_file + /srv/app/logs/app.log  lines 1-50
+
+Outside the scope (/var/log). Approving adds these directories
+to the scope until the session ends:
+
+  row 2  /srv/app/logs
+
+Allowing once adds only these paths, and only for this job:
+
+  row 2  /srv/app/logs/app.log
+
+[a] approve   [o] allow once   [d] deny   [v] view params
+>
+```
+
+| Key | Grant | Lasts |
+|---|---|---|
+| `a` | The directory of each row, exactly as `--allow` would have | Until the session ends |
+| `o` | The path of each row, and nothing else in its directory | This job only |
+| `d` | Nothing | — |
+
+`d` denies the job and the agent is told `denied by user; nothing was added to
+the scope`. A directory or path reached through a link is named with the path
+it resolves to, and both forms are granted.
+
+`a` grants the whole directory, not the one file on the row, so that the next
+read in the same directory does not ask again. Read the directory on the
+screen before you answer: a row for `/etc/shadow` asks you to add `/etc`. `o`
+grants nothing beyond the names on the screen, and a granted name never covers
+what is under it: allowing `/srv/app` once permits listing that directory, not
+reading the files in it. The grant is printed as one of
+
+```text
+14:02:07Z  scope    /srv/app/logs added for this session
+14:02:07Z  scope    /srv/app/logs/app.log added for this job
+```
+
+A session grant is recorded in `session.json` and as a `scope-added` event in
+`jobs.log`; a one-job grant is recorded as `scope-added-once` and is gone
+before the next job is read.
+
+`o` is offered only when every `+` row can be served by the names it asked
+for. A `search` row cannot, because its glob reads whatever its directory
+holds, so a job containing one leaves the key out and says why:
+
+```text
+This job cannot be allowed once: a glob needs its directory.
+```
+
+A row carries one marker, and a sensitive path keeps its `!`, so a `+` row is
+not the only one worth reading closely. Two cases are still refused before
+approval, because neither is a directory you would be choosing to open:
+
+- A path inside the scope that resolves outside it through a link.
+- A path whose directory does not exist or is not a directory.
+
+At level 0 there is no approval screen, so a path outside the scope is
+rejected with the scope and the `--allow` remedy:
+
+```text
+14:02:07Z  read_file /etc/shadow  rejected: outside the scope (/var/log); restart aken serve with --allow DIR to widen it
+```
 
 ## Results
 
@@ -186,9 +267,14 @@ not wait. A result with no flags can still contain sensitive data.
 Denied and rejected results have a summary with the reason, for example:
 
 ```text
-14:02:07Z  read_file /etc/shadow  rejected: outside the scope (/var/log); restart aken serve with --allow DIR to widen it
+14:02:07Z  read_file /etc/shadow  denied: denied by user; nothing was added to the scope
+14:02:08Z  read_file /etc/shadow  rejected: outside the scope (/var/log); restart aken serve with --allow DIR to widen it
 14:02:09Z  tail /var/log/app/app.log  error: cannot read file: permission denied for the user running aken serve
 ```
+
+The first two lines are the same read refused at level 1, where the approval
+screen offered the scope and you declined, and at level 0, where there is no
+screen to offer it on. See [Paths outside the scope](#paths-outside-the-scope).
 
 When `journal`, `docker_logs`, or `systemctl_status` returns no stdout but
 writes a diagnostic to stderr, the result has status `error`. Its error is
@@ -257,8 +343,8 @@ The collector creates this directory with mode `0700`:
 
 | File | Contents |
 |---|---|
-| `session.json` | `session_id`, `relay`, `level`, `created_at`, `expires_at`, `joined_at`, `joined_via`, `ended_at`, `argv`; rewritten at join and exit |
-| `jobs.log` | Append-only JSON lines with `time`, `seq`, `job_id`, `name`, `event`, `params`, `paths`, `status`, `lines`, `lines_redacted`, `flags`, `error`; events are `received`, `approved`, `denied`, `rejected`, `sent`, `dropped` |
+| `session.json` | `session_id`, `relay`, `level`, `created_at`, `expires_at`, `joined_at`, `joined_via`, `scope`, `ended_at`, `argv`; rewritten at join, when the session scope grows, and at exit. A one-job grant does not change the session scope and is not recorded here |
+| `jobs.log` | Append-only JSON lines with `time`, `seq`, `job_id`, `name`, `event`, `params`, `paths`, `status`, `lines`, `lines_redacted`, `flags`, `error`; events are `received`, `scope-added`, `scope-added-once`, `approved`, `denied`, `rejected`, `sent`, `dropped`; a `scope-added` or `scope-added-once` event carries what was granted in `paths` |
 | `results/<result seq>.txt` | Exactly the redacted lines of that result message; written once, mode `0400` |
 | `mapping.json` | Placeholder to original value; rewritten through a temporary file and rename after every result that added values |
 

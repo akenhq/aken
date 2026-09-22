@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"time"
 
@@ -20,6 +21,7 @@ type sessionInfo struct {
 	ExpiresAt time.Time `json:"expires_at"`
 	JoinedAt  time.Time `json:"joined_at"`
 	JoinedVia string    `json:"joined_via"`
+	Scope     []string  `json:"scope"`
 	EndedAt   time.Time `json:"ended_at"`
 	Argv      []string  `json:"argv"`
 }
@@ -46,7 +48,7 @@ type audit struct {
 	mappingSize int
 }
 
-func newAudit(o Options, id protocol.SessionID, created, expires time.Time) (*audit, error) {
+func newAudit(o Options, scope []string, id protocol.SessionID, created, expires time.Time) (*audit, error) {
 	dir := filepath.Join(o.StateDir, "sessions", created.UTC().Format("20060102T150405Z")+"-"+id.String()[:8])
 	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
 		return nil, err
@@ -66,7 +68,7 @@ func newAudit(o Options, id protocol.SessionID, created, expires time.Time) (*au
 	if err != nil {
 		return nil, err
 	}
-	a := &audit{dir: dir, log: log, session: sessionInfo{SessionID: id.String(), Relay: o.RelayURL, Level: o.Level, CreatedAt: created, ExpiresAt: expires, Argv: o.Argv}, mappingSize: -1}
+	a := &audit{dir: dir, log: log, session: sessionInfo{SessionID: id.String(), Relay: o.RelayURL, Level: o.Level, CreatedAt: created, ExpiresAt: expires, Scope: slices.Clone(scope), Argv: o.Argv}, mappingSize: -1}
 	if err := a.writeSession(); err != nil {
 		_ = log.Close()
 		return nil, err

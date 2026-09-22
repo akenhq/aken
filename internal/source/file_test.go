@@ -239,6 +239,43 @@ func TestSearchPages(t *testing.T) {
 	}
 }
 
+func TestGrantedPaths(t *testing.T) {
+	dir := t.TempDir()
+	granted, neighbour := filepath.Join(dir, "granted.log"), filepath.Join(dir, "neighbour.log")
+	for _, path := range []string{granted, neighbour} {
+		if err := os.WriteFile(path, []byte("line\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	nested := filepath.Join(dir, "nested")
+	if err := os.Mkdir(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	inner := filepath.Join(nested, "inner.log")
+	if err := os.WriteFile(inner, []byte("line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	files := Files{Paths: []string{granted, nested}}
+	// A granted name covers that one name, its parent directory does not come with it,
+	// and neither does anything under a granted directory.
+	for path, want := range map[string]bool{granted: true, nested: true, neighbour: false, dir: false, inner: false} {
+		if files.Permits(path) != want {
+			t.Errorf("Permits(%s) = %v, want %v", path, !want, want)
+		}
+		file, err := files.Open(path)
+		if err == nil {
+			_ = file.Close()
+		}
+		if (err == nil) != want {
+			t.Errorf("Open(%s) = %v, want allowed=%v", path, err, want)
+		}
+	}
+	root := Files{Paths: []string{"/"}}
+	if _, err := root.Open("/"); err == nil {
+		t.Fatal("opened the filesystem root as a granted name")
+	}
+}
+
 func TestGzip(t *testing.T) {
 	dir := t.TempDir()
 	var buf bytes.Buffer

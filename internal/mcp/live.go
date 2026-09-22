@@ -22,7 +22,7 @@ const (
 )
 
 type listDirArgs struct {
-	Path string `json:"path" jsonschema:"absolute directory path inside the session scope"`
+	Path string `json:"path" jsonschema:"absolute directory path; one outside the scope needs the operator to add it at the terminal"`
 }
 type readFileArgs struct {
 	Path string `json:"path" jsonschema:"absolute file path inside the session scope"`
@@ -30,7 +30,7 @@ type readFileArgs struct {
 	To   int    `json:"to,omitempty" jsonschema:"last line, default from+499; at most 500 lines per result"`
 }
 type searchFilesArgs struct {
-	Glob   string `json:"glob" jsonschema:"absolute glob inside the session scope"`
+	Glob   string `json:"glob" jsonschema:"absolute glob; one outside the scope needs the operator to add it at the terminal"`
 	Regex  string `json:"regex" jsonschema:"RE2 regular expression"`
 	Since  string `json:"since,omitempty" jsonschema:"only search files modified since this duration or RFC 3339 time"`
 	Before int    `json:"before,omitempty" jsonschema:"context lines before, 0 to 50"`

@@ -17,7 +17,7 @@ func TestAudit(t *testing.T) {
 	now := time.Date(2026, 9, 13, 14, 0, 0, 0, time.UTC)
 	id := protocol.SessionID{0x1a, 0x2b, 0x3c, 0x4d}
 	o := Options{StateDir: t.TempDir(), Level: 1, RelayURL: protocol.DefaultRelayURL, Argv: []string{"serve", "--level", "1"}}
-	a, err := newAudit(o, id, now, now.Add(time.Hour))
+	a, err := newAudit(o, []string{"/var/log"}, id, now, now.Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
