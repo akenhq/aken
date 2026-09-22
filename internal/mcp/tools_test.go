@@ -55,7 +55,7 @@ func TestTools(t *testing.T) {
 		text string
 		meta string
 	}{
-		{"sources", map[string]any{}, "a  file  5  ..  test\nb  file  1  ..  test\nartifact expires " + stored.ExpiresAt.Format(time.RFC3339) + "\n", `{"sources":2}`},
+		{"sources", map[string]any{}, "a  file  5  -  test\nb  file  1  -  test\nartifact expires " + stored.ExpiresAt.Format(time.RFC3339) + "\n", `{"sources":2}`},
 		{"tail", map[string]any{"source": "a", "n": 2}, "4: error again\n5: last\n", `{"lines":2,"lines_redacted":0,"first_line":4,"last_line":5}`},
 		{"read", map[string]any{"source": "a", "from": 1, "to": 2}, "1: first\n2: error <ip#1>\n", `{"lines":2,"lines_redacted":1}`},
 		{"context", map[string]any{"source": "a", "line": 2, "around": 0}, "2: error <ip#1>\n", `{"lines":1,"lines_redacted":1,"first_line":2,"last_line":2}`},
@@ -82,7 +82,7 @@ func TestTools(t *testing.T) {
 		})
 	}
 	text, meta := call(t, cs, "summary", map[string]any{})
-	for _, fragment := range []string{"created ", "expires ", "sources 2", "total lines 6", "lines redacted 1", "ip  1 values  1 lines", "flags 2", "rules 14"} {
+	for _, fragment := range []string{"created ", "expires ", "sources 2", "total lines 6", "lines redacted 1", "ip  1 value  1 line", "secret  0 values  0 lines", "flags 2", "rules 14"} {
 		if !strings.Contains(text, fragment) {
 			t.Errorf("summary missing %q", fragment)
 		}
@@ -101,7 +101,7 @@ func TestToolErrors(t *testing.T) {
 		args    map[string]any
 		message string
 	}{
-		{"search", map[string]any{"regex": "[private-token"}, "regex:"},
+		{"search", map[string]any{"regex": "["}, "regex: error parsing regexp: missing closing ]: `[`"},
 		{"search", map[string]any{"regex": "x", "before": -1}, "before:"},
 		{"search", map[string]any{"regex": "x", "after": 51}, "after:"},
 		{"search", map[string]any{"regex": "x", "max": 0}, "max:"},
@@ -297,5 +297,14 @@ func TestToolModes(t *testing.T) {
 	got, err = connect(t, missing).CallTool(t.Context(), &mcp.CallToolParams{Name: "ps", Arguments: map[string]any{}})
 	if err != nil || !got.IsError || !strings.Contains(got.Content[0].(*mcp.TextContent).Text, "no session") {
 		t.Fatalf("live no session: %+v, %v", got, err)
+	}
+}
+
+func TestSourcesEmptyFields(t *testing.T) {
+	s, _ := fixture(t, "line\n")
+	s.loaded.Sources[0].Meta.Note = ""
+	text, _ := call(t, connect(t, s), "sources", map[string]any{})
+	if !strings.HasPrefix(text, "a  file  1  -  -\n") {
+		t.Fatalf("sources = %q", text)
 	}
 }

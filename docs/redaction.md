@@ -182,6 +182,10 @@ least 20 characters, contains a letter and a digit, and has Shannon entropy
 of at least 3.5 bits per character. Placeholders and kept values are excluded.
 Flags count distinct strings and include source and line numbers.
 
+Hex ids and UUIDs are ID-shaped flags. A `name=value` string whose value is
+a hex id or UUID also counts as a hex id when the name matches
+`^[A-Za-z_][A-Za-z0-9_-]*$`, such as `req=9a1d7f1706cae1fc`.
+
 Choose **view flagged lines** before sending. If a value is sensitive, abort,
 add a rule, and run again. A flag does not redact the value. An absence of
 flags does not establish that the artifact is free of sensitive data.
@@ -217,3 +221,22 @@ is not part of the upload. The collector does not store the token.
 `--retention D` removes directories under `runs/` whose names start with a
 timestamp older than that duration. The default is `720h` (30 days);
 `0` keeps everything. Dry runs write nothing and prune nothing.
+
+## Looking up original values
+
+When the agent names a placeholder, such as `<ip#3>`, look up the original
+value on the server with `aken reveal`. It reads the local copies only and
+sends nothing anywhere. The agent and `aken-mcp` cannot do this lookup.
+
+```sh
+sudo aken reveal                                  # list local copies, newest first
+sudo aken reveal 20260921T101500Z-1a2b3c4d        # every placeholder and its value
+sudo aken reveal 1a2b3c4d '<ip#3>' email#1        # only these placeholders
+```
+
+The first argument is a local copy directory name or a session id prefix of
+at least 8 hex characters. Placeholders may omit the angle brackets. Each
+result is one line: the placeholder, a tab, and the value. Control
+characters in values are escaped. A placeholder that is not in the mapping is
+reported on stderr and the exit code is 1. `--state-dir DIR` has the same
+default as for `collect` and `serve`.

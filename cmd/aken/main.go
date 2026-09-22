@@ -14,6 +14,7 @@ import (
 
 	"github.com/akenhq/aken/internal/buildinfo"
 	"github.com/akenhq/aken/internal/collect"
+	"github.com/akenhq/aken/internal/screen"
 	"github.com/akenhq/aken/internal/serve"
 	"github.com/akenhq/aken/internal/source"
 	"github.com/akenhq/aken/protocol"
@@ -29,10 +30,12 @@ Usage:
 Commands:
   collect   Collect logs, redact them here, review, and upload one encrypted artifact
   serve     Open a live session and run approved catalog jobs
+  reveal    Print the original values behind placeholders, from local copies
   version   Print the version
   help      Print this help
 
 Run "aken <command> --help" for details.
+Start with a dry run: sudo aken collect --dry-run --unit <unit>
 `
 
 const collectUsage = `Usage: aken collect [flags]
@@ -56,7 +59,7 @@ Redaction:
 
 Upload:
   --ttl D             artifact lifetime on the relay (default 4h, maximum 24h)
-  --relay URL         relay base URL (default https://relay.aken.dev)
+  --relay URL         relay base URL (default https://relay.aken.dev; http:// only on loopback)
   --dry-run           collect, redact and show the review screen; upload nothing
 
 Local copy:
@@ -69,6 +72,15 @@ T is a duration before now (30m, 2h, 3d), an RFC 3339 time (2026-09-12T10:00:00Z
 
 var geteuid = os.Geteuid // replaced in tests
 
+// pageLines keeps one page of a long listing inside the window, leaving room
+// for the prompt that follows it.
+func pageLines() int {
+	if _, height, err := term.GetSize(int(os.Stdout.Fd())); err == nil && height > 2 {
+		return height - 2
+	}
+	return 40
+}
+
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -78,15 +90,23 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	switch args[0] {
 	case "help", "-h", "--help":
+		if args[0] == "help" && len(args) == 2 {
+			switch args[1] {
+			case "collect", "serve":
+				return run([]string{args[1], "--help"}, stdout, stderr)
+			}
+		}
 		_, _ = fmt.Fprint(stdout, usage)
 		return 0
-	case "version":
+	case "version", "--version", "-V":
 		_, _ = fmt.Fprintln(stdout, buildinfo.String("aken"))
 		return 0
 	case "serve":
 		return runServe(args, stdout, stderr)
 	case "collect":
 		return runCollect(args, stdout, stderr)
+	case "reveal":
+		return runReveal(args, stdout, stderr)
 	default:
 		_, _ = fmt.Fprintf(stderr, "aken: unknown command %q\nRun \"aken help\" for usage.\n", args[0])
 		return 2
@@ -100,8 +120,8 @@ func (s *stringList) Set(value string) error { *s = append(*s, value); return ni
 
 func runCollect(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("collect", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	flags.Usage = func() { _, _ = fmt.Fprint(stdout, collectUsage) }
+	flags.SetOutput(io.Discard)
+	flags.Usage = func() {}
 	var o collect.Options
 	for _, f := range []struct {
 		name  string
@@ -123,17 +143,15 @@ func runCollect(args []string, stdout, stderr io.Writer) int {
 	flags.DurationVar(&o.Retention, "retention", 720*time.Hour, "")
 	if err := flags.Parse(args[1:]); err != nil {
 		if err == flag.ErrHelp {
+			_, _ = fmt.Fprint(stdout, collectUsage)
 			return 0
 		}
+		_, _ = fmt.Fprintf(stderr, "aken: %s. Run \"aken collect --help\".\n", err)
 		return 2
-	}
-	if geteuid() == 0 {
-		_, _ = fmt.Fprintln(stderr, "aken: refusing to run as root. Run it as the dedicated unprivileged user, for example: sudo -u aken aken collect")
-		return 1
 	}
 	usageError := func(message string) int { _, _ = fmt.Fprintf(stderr, "aken: %s\n", message); return 2 }
 	if flags.NArg() != 0 {
-		return usageError("unexpected positional arguments")
+		return usageError("unexpected positional arguments; quote values that contain spaces, such as --since \"2026-09-12 10:00\"")
 	}
 	if len(o.Units)+len(o.Containers)+len(o.Files)+len(o.Globs) == 0 {
 		return usageError("at least one source is required")
@@ -170,22 +188,35 @@ func runCollect(args []string, stdout, stderr io.Writer) int {
 			return usageError(err.Error())
 		}
 	}
+	for _, dir := range o.Allow {
+		if !filepath.IsAbs(dir) {
+			return usageError("--allow directory must be absolute")
+		}
+	}
+	if _, err := protocol.NewRelayClient(o.RelayURL, [32]byte{}); err != nil {
+		return usageError(err.Error())
+	}
+	if err := collect.ValidateKeepCategories(o.KeepCategories); err != nil {
+		return usageError(err.Error())
+	}
+	if geteuid() == 0 {
+		_, _ = fmt.Fprintln(stderr, "aken: refusing to run as root. The installed aken command switches to the aken user for you: run sudo aken collect. From a source build, run it as any unprivileged user.")
+		return 1
+	}
 	o.Argv = args
 	o.Collector = buildinfo.String("aken")
-	interactive := term.IsTerminal(int(os.Stdin.Fd()))
-	pageLines := 40
-	if _, height, err := term.GetSize(int(os.Stdout.Fd())); err == nil && height > 2 {
-		pageLines = height - 2
-	}
-	return collect.Run(context.Background(), o, os.Stdin, stdout, stderr, interactive, pageLines)
+	stdin := screen.NewInput(os.Stdin, int(os.Stdin.Fd()), term.IsTerminal(int(os.Stdin.Fd())))
+	return collect.Run(context.Background(), o, stdin, stdout, stderr, pageLines())
 }
 
 const serveUsage = `Usage: aken serve [flags]
 
+serve needs a terminal. Ctrl-C ends the session; so does aken-mcp end on your machine.
+
 Session:
   --level N           0 runs every catalog job without asking; 1 asks for approval per job or plan (default 1)
   --ttl D             session lifetime on the relay (default 8h, maximum 24h)
-  --relay URL         relay base URL (default https://relay.aken.dev)
+  --relay URL         relay base URL (default https://relay.aken.dev; http:// only on loopback)
   --allow DIR         extra directory that file jobs may read from (repeatable; /var/log is always allowed)
 
 Redaction:
@@ -199,13 +230,9 @@ Local copy:
 `
 
 func runServe(args []string, stdout, stderr io.Writer) int {
-	if geteuid() == 0 {
-		_, _ = fmt.Fprintln(stderr, "aken: refusing to run as root. Run it as the dedicated unprivileged user, for example: sudo -u aken aken serve")
-		return 1
-	}
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	flags.Usage = func() { _, _ = fmt.Fprint(stdout, serveUsage) }
+	flags.SetOutput(io.Discard)
+	flags.Usage = func() {}
 	var o serve.Options
 	flags.IntVar(&o.Level, "level", 1, "")
 	flags.DurationVar(&o.TTL, "ttl", protocol.DefaultSessionTTL, "")
@@ -221,13 +248,15 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	flags.DurationVar(&o.Retention, "retention", 720*time.Hour, "")
 	if err := flags.Parse(args[1:]); err != nil {
 		if err == flag.ErrHelp {
+			_, _ = fmt.Fprint(stdout, serveUsage)
 			return 0
 		}
+		_, _ = fmt.Fprintf(stderr, "aken: %s. Run \"aken serve --help\".\n", err)
 		return 2
 	}
 	usageError := func(message string) int { _, _ = fmt.Fprintf(stderr, "aken: %s\n", message); return 2 }
 	if flags.NArg() != 0 {
-		return usageError("unexpected positional arguments")
+		return usageError("unexpected positional arguments; quote values that contain spaces, such as --since \"2026-09-12 10:00\"")
 	}
 	if o.Level != 0 && o.Level != 1 {
 		return usageError("--level must be 0 or 1")
@@ -246,17 +275,21 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	if _, err := protocol.NewRelayClient(o.RelayURL, [32]byte{}); err != nil {
 		return usageError(err.Error())
 	}
+	if err := collect.ValidateKeepCategories(o.KeepCategories); err != nil {
+		return usageError(err.Error())
+	}
+	if geteuid() == 0 {
+		_, _ = fmt.Fprintln(stderr, "aken: refusing to run as root. The installed aken command switches to the aken user for you: run sudo aken serve. From a source build, run it as any unprivileged user.")
+		return 1
+	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		_, _ = fmt.Fprintln(stderr, "aken: serve needs a terminal")
 		return 1
 	}
 	o.Argv = args
 	o.Collector = buildinfo.String("aken")
-	pageLines := 40
-	if _, height, err := term.GetSize(int(os.Stdout.Fd())); err == nil && height > 2 {
-		pageLines = height - 2
-	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	return serve.Run(ctx, o, os.Stdin, stdout, stderr, pageLines)
+	stdin := screen.NewInput(os.Stdin, int(os.Stdin.Fd()), true)
+	return serve.Run(ctx, o, stdin, stdout, stderr, pageLines())
 }

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/akenhq/aken/internal/buildinfo"
 	"github.com/akenhq/aken/internal/session"
 	"github.com/akenhq/aken/protocol"
 	"github.com/akenhq/aken/relay"
@@ -26,27 +27,35 @@ func TestRun(t *testing.T) {
 		code           int
 		stdout, stderr string
 	}{
-		{"version", []string{"version"}, 0, "aken-mcp dev (", ""},
+		{"long version", []string{"--version"}, 0, buildinfo.String("aken-mcp") + "\n", ""},
+		{"short version", []string{"-V"}, 0, buildinfo.String("aken-mcp") + "\n", ""},
+		{"help join", []string{"help", "join"}, 0, joinUsage, ""},
+		{"help serve", []string{"help", "serve"}, 0, serveUsage, ""},
+		{"help status", []string{"help", "status"}, 0, statusUsage, ""},
+		{"help end", []string{"help", "end"}, 0, endUsage, ""},
+		{"version", []string{"version"}, 0, buildinfo.String("aken-mcp") + "\n", ""},
 		{"help", []string{"help"}, 0, usage, ""},
 		{"long help", []string{"--help"}, 0, usage, ""},
 		{"short help", []string{"-h"}, 0, usage, ""},
 		{"no args", nil, 2, "", usage},
-		{"unknown", []string{"bogus"}, 2, "", "aken-mcp: unknown command\n"},
+		{"unknown", []string{"bogus"}, 2, "", "aken-mcp: unknown command \"bogus\". Run \"aken-mcp help\".\n"},
 		{"join help", []string{"join", "--help"}, 0, joinUsage, ""},
 		{"serve help", []string{"serve", "--help"}, 0, serveUsage, ""},
 		{"serve relay", []string{"serve", "--relay", "https://example.com", "--help"}, 0, serveUsage, ""},
-		{"serve missing relay", []string{"serve", "--relay"}, 2, serveUsage, "aken-mcp: invalid flags\n"},
+		{"serve missing relay", []string{"serve", "--relay"}, 2, serveUsage, "aken-mcp: flag needs an argument: -relay\n"},
 		{"status help", []string{"status", "--help"}, 0, statusUsage, ""},
 		{"end help", []string{"end", "--help"}, 0, endUsage, ""},
-		{"status missing", []string{"status"}, 1, "", "aken-mcp: no session\n"},
-		{"end missing", []string{"end"}, 1, "", "aken-mcp: no session\n"},
-		{"invalid token", []string{"join", "private-token"}, 1, "", "aken-mcp: invalid token\n"},
-		{"empty token", []string{"join"}, 1, "", "aken-mcp: invalid token\n"},
+		{"status missing", []string{"status"}, 1, "", "aken-mcp: no session; run aken-mcp join and paste the token from your server\n"},
+		{"end missing", []string{"end"}, 1, "", "aken-mcp: no session; run aken-mcp join and paste the token from your server\n"},
+		{"invalid token", []string{"join", "private-token"}, 1, "", "aken-mcp: invalid token: a token is akn1_ followed by 52 lowercase letters and digits; copy the whole line from the server terminal\n"},
+		{"empty token", []string{"join"}, 1, "", "aken-mcp: no token given; paste the token that aken serve or aken collect printed on your server\n"},
+		{"uppercase token", []string{"join", strings.ToUpper(protocol.NewToken().Encode())}, 1, "", "aken-mcp: invalid token: it contains capital letters; copy it again from the server terminal\n"},
 		{"extra token", []string{"join", "private-token", "extra"}, 2, "", "aken-mcp: unexpected arguments\n"},
 		{"serve extra", []string{"serve", "extra"}, 2, "", "aken-mcp: unexpected arguments\n"},
-		{"bad flag", []string{"join", "--private-token"}, 2, joinUsage, "aken-mcp: invalid flags\n"},
-		{"missing relay", []string{"join", "--relay"}, 2, joinUsage, "aken-mcp: invalid flags\n"},
-		{"bad bool", []string{"serve", "--allow-chat-join=private-token"}, 2, serveUsage, "aken-mcp: invalid flags\n"},
+		{"bad flag", []string{"join", "--bogus"}, 2, joinUsage, "aken-mcp: flag provided but not defined: -bogus\n"},
+		{"token flag", []string{"join", "--akn1_private-token"}, 2, joinUsage, "aken-mcp: invalid flags\n"},
+		{"missing relay", []string{"join", "--relay"}, 2, joinUsage, "aken-mcp: flag needs an argument: -relay\n"},
+		{"bad bool", []string{"serve", "--allow-chat-join=akn1_private-token"}, 2, serveUsage, "aken-mcp: invalid flags\n"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -54,8 +63,8 @@ func TestRun(t *testing.T) {
 				t.Fatalf("exit = %d, want %d", code, tt.code)
 			}
 			for _, output := range []struct{ name, got, want string }{{"stdout", stdout.String(), tt.stdout}, {"stderr", stderr.String(), tt.stderr}} {
-				if !strings.HasPrefix(output.got, output.want) || (output.want == "" && output.got != "") {
-					t.Errorf("%s = %q, want prefix %q", output.name, output.got, output.want)
+				if output.got != output.want {
+					t.Errorf("%s = %q, want %q", output.name, output.got, output.want)
 				}
 				if strings.Contains(output.got, "private-token") {
 					t.Error("token leaked")
@@ -87,7 +96,7 @@ func TestJoinStatusEnd(t *testing.T) {
 			t.Fatal("token leaked")
 		}
 	}
-	invoke([]string{"join", "--relay", server.URL}, token.Encode()+"\n", 1, "aken-mcp: no artifact for this token on "+server.URL+": it expired, was deleted, or the upload did not finish\n")
+	invoke([]string{"join", "--relay", server.URL}, token.Encode()+"\n", 1, "aken-mcp: no artifact for this token on "+server.URL+": it expired, was deleted, or the upload did not finish; if the collector used another relay, join with aken-mcp join --relay <URL>\n")
 	info, err := client.CreateSession(t.Context(), token.SessionID(), time.Hour, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -114,12 +123,12 @@ func TestJoinStatusEnd(t *testing.T) {
 	if stored.Version != 2 || stored.Mode != "blob" || stored.JoinedVia != "cli" || stored.Token != token.Encode() || stored.Relay != server.URL || !stored.ExpiresAt.Equal(info.ExpiresAt) {
 		t.Fatal("wrong stored session")
 	}
-	invoke([]string{"status"}, "", 0, "Session "+stored.SessionID+" on "+server.URL+", mode blob,")
+	invoke([]string{"status"}, "", 0, "Session "+stored.SessionID+" on "+server.URL+", mode one-shot,")
 	stored.ExpiresAt = time.Now().Add(-time.Minute)
 	if err := session.Save(sessionPath, stored); err != nil {
 		t.Fatal(err)
 	}
-	invoke([]string{"status"}, "", 0, " (expired)\n")
+	invoke([]string{"status"}, "", 0, " (expired; run aken-mcp join with a new token)\n")
 	invoke([]string{"join", token.Encode(), "--relay", server.URL}, "", 0, joined)
 	invoke([]string{"end"}, "", 0, "Ended session "+stored.SessionID+"; the artifact is deleted from the relay.\n")
 	if _, err := client.Session(t.Context(), token.SessionID()); !protocol.IsNotFound(err) {
@@ -128,8 +137,8 @@ func TestJoinStatusEnd(t *testing.T) {
 	if err := session.Save(sessionPath, stored); err != nil {
 		t.Fatal(err)
 	}
-	invoke([]string{"end"}, "", 0, "Ended session ")
-	invoke([]string{"status"}, "", 1, "aken-mcp: no session\n")
+	invoke([]string{"end"}, "", 0, "Session "+stored.SessionID+" was already gone from the relay; forgot it locally.\n")
+	invoke([]string{"status"}, "", 1, "aken-mcp: no session; run aken-mcp join and paste the token from your server\n")
 }
 
 func TestLiveJoinStatusEnd(t *testing.T) {
@@ -218,7 +227,7 @@ func TestLiveJoinStatusEnd(t *testing.T) {
 			}
 			stderr.Reset()
 			stdout.Reset()
-			if run([]string{"status"}, strings.NewReader(""), &stdout, &stderr) != 0 || !strings.Contains(stdout.String(), "mode session,") {
+			if run([]string{"status"}, strings.NewReader(""), &stdout, &stderr) != 0 || !strings.Contains(stdout.String(), "mode live,") {
 				t.Fatalf("status: %q", stdout.String())
 			}
 			if run([]string{"end"}, strings.NewReader(""), &stdout, &stderr) != 0 {
@@ -228,5 +237,27 @@ func TestLiveJoinStatusEnd(t *testing.T) {
 				t.Fatal("live session was not deleted")
 			}
 		})
+	}
+}
+
+func TestJoinEmptyLine(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"join"}, strings.NewReader("  \n"), &stdout, &stderr); code != 1 || stderr.String() != "aken-mcp: no token given; paste the token that aken serve or aken collect printed on your server\n" {
+		t.Fatalf("empty line: exit %d, stderr %q", code, stderr.String())
+	}
+}
+
+func TestServeEOF(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = writer.Close()
+	original := os.Stdin
+	os.Stdin = reader
+	t.Cleanup(func() { os.Stdin = original; _ = reader.Close() })
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"serve"}, reader, &stdout, &stderr); code != 0 || stderr.Len() != 0 {
+		t.Fatalf("EOF: exit %d, stderr %q", code, stderr.String())
 	}
 }

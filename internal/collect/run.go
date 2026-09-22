@@ -2,7 +2,6 @@
 package collect
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -12,8 +11,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/user"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/akenhq/aken/internal/redact"
@@ -54,6 +55,9 @@ func validate(o Options) error {
 			return errors.New("--allow directory must be absolute")
 		}
 	}
+	if err := ValidateKeepCategories(o.KeepCategories); err != nil {
+		return err
+	}
 	_, err := protocol.NewRelayClient(o.RelayURL, [32]byte{})
 	return err
 }
@@ -67,7 +71,7 @@ func LoadRules(rulesFile string, keep, keepCategories []string) (*redact.Engine,
 		if _, err := os.Stat("/etc/aken/rules.json"); err == nil {
 			path = "/etc/aken/rules.json"
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return nil, redact.File{}, "", 0, 0, err
+			return nil, redact.File{}, "", 0, 0, fmt.Errorf("--rules: %w", err)
 		}
 	}
 	merged := base
@@ -75,15 +79,15 @@ func LoadRules(rulesFile string, keep, keepCategories []string) (*redact.Engine,
 	if path != "" {
 		data, err := os.ReadFile(path) //nolint:gosec // the user selects the local rules file
 		if err != nil {
-			return nil, redact.File{}, "", 0, 0, err
+			return nil, redact.File{}, "", 0, 0, fmt.Errorf("--rules: %w", err)
 		}
 		extra, err = redact.ParseRules(data)
 		if err != nil {
-			return nil, redact.File{}, "", 0, 0, err
+			return nil, redact.File{}, "", 0, 0, fmt.Errorf("--rules: %w", err)
 		}
 		merged, err = redact.Merge(base, extra)
 		if err != nil {
-			return nil, redact.File{}, "", 0, 0, err
+			return nil, redact.File{}, "", 0, 0, fmt.Errorf("--rules: %w", err)
 		}
 	}
 	engine, err := redact.Compile(merged, keep, keepCategories)
@@ -130,11 +134,19 @@ func readSources(ctx context.Context, o Options, stderr io.Writer) ([]*source.So
 			return nil, err
 		}
 		if len(s.Lines) == 0 {
-			_, _ = fmt.Fprintf(stderr, "aken: no journal entries for %s in the window; check the name, the window, that the aken user is in the systemd-journal group and, for containers, that the logging driver is journald\n", spec.Target)
+			username := strconv.Itoa(os.Geteuid())
+			if current, err := user.Current(); err == nil {
+				username = current.Username
+			}
+			_, _ = fmt.Fprintf(stderr, "aken: no journal entries for %s in the window; check the name, the window, that %s is in the systemd-journal group and, for containers, that the logging driver is journald", spec.Target, username)
+			if s.Stderr != "" {
+				_, _ = fmt.Fprintf(stderr, "; journalctl said: %s", s.Stderr)
+			}
+			_, _ = fmt.Fprintln(stderr)
 		}
 		sources = append(sources, s)
 	}
-	files := source.Files{Allowed: append([]string{"/var/log"}, o.Allow...), Tail: o.Tail, ModifiedAfter: o.Since}
+	files := source.Files{Allowed: append([]string{"/var/log"}, o.Allow...), Tail: o.Tail, ModifiedAfter: o.Since, Stderr: stderr}
 	fileSources, err := source.ReadFiles(files, o.Files, o.Globs)
 	if err != nil {
 		return nil, err
@@ -142,10 +154,24 @@ func readSources(ctx context.Context, o Options, stderr io.Writer) ([]*source.So
 	sources = append(sources, fileSources...)
 	return sources, nil
 }
-func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writer, interactive bool, pageLines int) int {
+func Run(ctx context.Context, o Options, stdin *screen.Input, stdout, stderr io.Writer, pageLines int) int {
 	fail := func(err error) int { _, _ = fmt.Fprintf(stderr, "aken: %s\n", err); return 1 }
 	if err := validate(o); err != nil {
 		return fail(err)
+	}
+	if !o.DryRun && !stdin.Interactive() {
+		return fail(errors.New("the review screen needs a terminal; use --dry-run to check a collection without one"))
+	}
+	var info protocol.Info
+	if !o.DryRun {
+		client, err := protocol.NewRelayClient(o.RelayURL, [32]byte{})
+		if err != nil {
+			return fail(err)
+		}
+		info, err = client.Info(ctx)
+		if err != nil {
+			return fail(err)
+		}
 	}
 	engine, merged, path, defaults, extras, err := LoadRules(o.RulesFile, o.Keep, o.KeepCategories)
 	if err != nil {
@@ -225,14 +251,11 @@ func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writ
 		return fail(err)
 	}
 	screen.manifest = m
-	if !interactive {
+	if !stdin.Interactive() {
 		renderScreen(stdout, screen)
-		if o.DryRun {
-			return 0
-		}
-		return fail(errors.New("the review screen needs a terminal"))
+		return 0
 	}
-	choice, err := review(bufio.NewReader(stdin), stdout, screen, o.DryRun, pageLines)
+	choice, err := review(stdin, stdout, screen, o.DryRun, pageLines)
 	if err != nil {
 		return fail(err)
 	}
@@ -243,19 +266,22 @@ func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writ
 		_, _ = fmt.Fprintln(stderr, "aken: aborted, nothing was uploaded")
 		return 3
 	}
-	return upload(ctx, o, plaintext.Bytes(), m, engine.Mapping(), stdout, stderr)
+	return upload(ctx, o, info, plaintext.Bytes(), m, engine.Mapping(), stdout, stderr)
 }
-func upload(ctx context.Context, o Options, plaintext []byte, m protocol.Manifest, mapping map[string]string, stdout, stderr io.Writer) int {
-	fail := func(err error) int { _, _ = fmt.Fprintf(stderr, "aken: %s\n", err); return 1 }
+func upload(ctx context.Context, o Options, info protocol.Info, plaintext []byte, m protocol.Manifest, mapping map[string]string, stdout, stderr io.Writer) int {
+	accepted := false
+	fail := func(err error) int {
+		_, _ = fmt.Fprintf(stderr, "aken: %s\n", err)
+		if !accepted {
+			_, _ = fmt.Fprintln(stderr, "Nothing was uploaded; run the same command again.")
+		}
+		return 1
+	}
 	token := protocol.NewToken()
 	defer token.Zero()
 	id := token.SessionID()
 	keys := protocol.DeriveBlobKeys(token.ContentRoot())
 	client, err := protocol.NewRelayClient(o.RelayURL, token.RelayCredential())
-	if err != nil {
-		return fail(err)
-	}
-	info, err := client.Info(ctx)
 	if err != nil {
 		return fail(err)
 	}
@@ -272,7 +298,8 @@ func upload(ctx context.Context, o Options, plaintext []byte, m protocol.Manifes
 	}
 	dir := filepath.Join(o.StateDir, "runs", m.CreatedAt.Format("20060102T150405Z")+"-"+id.String()[:8])
 	uploadFail := func(err error) int {
-		_, _ = fmt.Fprintf(stderr, "aken: upload failed: %s\nThe local copy is at %s; nothing readable reached the relay\n", err, dir)
+		fail(fmt.Errorf("upload failed: %w", err))
+		_, _ = fmt.Fprintf(stderr, "The local copy is at %s; nothing readable reached the relay\n", dir)
 		return 1
 	}
 	// The local manifest needs the ciphertext hashes before any files are written.
@@ -297,6 +324,7 @@ func upload(ctx context.Context, o Options, plaintext []byte, m protocol.Manifes
 		if err := client.PutChunk(ctx, id, uint64(i), chunk); err != nil {
 			return uploadFail(err)
 		}
+		accepted = true
 	}
 	manifest, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {

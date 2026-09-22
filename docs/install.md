@@ -1,13 +1,32 @@
-# Install and verify
+# Install
 
-Install both parts of Aken:
-
-- [Install the collector on your server](#install-the-collector-on-your-server).
-- [Install the MCP on your machine](#install-the-mcp-on-your-machine), then connect your coding agent.
+| On the server | On your machine |
+|---|---|
+| Install the collector. | Install the MCP and connect your agent. |
+| Start: `sudo aken serve`. | Join: `aken-mcp join`. |
+| Approve jobs in the terminal. | Ask the agent to investigate. |
 
 Both script installers download a release binary and check its SHA-256 hash against
 an embedded hash. To verify a script's signature before running it, see
-[Verify the script](#verify-the-script).
+[Verify the script](verify.md#verify-the-script).
+
+## Try it without installing
+
+On your server, download the collector, collect logs, and remove the temporary binary:
+
+```sh
+curl -fsSL https://aken.dev/run.sh | sudo bash -s -- collect --unit nginx --since 1h
+```
+
+On your server, open a live session instead:
+
+```sh
+curl -fsSL https://aken.dev/run.sh | sudo bash -s -- serve
+```
+
+The local audit copy remains after the temporary binary is removed. See
+[Run-once details](#run-once-details) for permissions and state paths.
+Install the MCP on your machine below to use the results with your agent.
 
 ## Install the collector on your server
 
@@ -37,7 +56,7 @@ contains the same binary as the signed GitHub release asset.
 Then [connect your agent](mcp.md#install) and [join a session](mcp.md#join-a-session).
 
 To check the binary, run `aken-mcp version` and verify that version's
-`SHA256SUMS` as described in [Verify a release by hand](#verify-a-release-by-hand).
+`SHA256SUMS` as described in [Verify a release by hand](verify.md#verify-a-release-by-hand).
 Print the installed binary's path, replacing `<os>-<arch>` with `linux-x64`,
 `linux-arm64`, or `darwin-arm64`:
 
@@ -89,7 +108,112 @@ curl -fsSL https://aken.dev/install-mcp.sh | bash -s -- --version <tag> --bin-di
 `--bin-dir` requires an absolute path. `--version` downloads that release's
 own `install-mcp.sh`, which carries its own hashes. Verify the selected
 release's script if you need to check its signature before execution.
-For manual installation, see [Install the MCP by hand](#install-the-mcp-by-hand).
+For manual installation, see [Install the MCP by hand](verify.md#install-the-mcp-by-hand).
+
+## First run
+
+On the server, run a smoke test. Replace `<unit>` with a journald unit:
+
+```sh
+sudo aken collect --dry-run --unit <unit>
+```
+
+The `aken` command switches to the `aken` user before the collector starts.
+This collects and displays redacted content without uploading.
+See [Live sessions](serve.md) to open a session, [Collect logs](collect.md)
+to send an artifact, and [Docker logs](docker.md) to configure container logging.
+
+## Upgrade
+
+On the server, run the same collector installer again:
+
+```sh
+curl -fsSL https://aken.dev/install.sh | sudo bash
+```
+
+On your machine, update the npm package:
+
+```sh
+npm install -g aken-mcp@latest
+```
+
+If you installed without Node, rerun the MCP installer on your machine:
+
+```sh
+curl -fsSL https://aken.dev/install-mcp.sh | bash
+```
+
+The MCP session file survives either upgrade. Restart your agent's MCP process
+to use the new binary. See the [release notes](https://github.com/akenhq/aken/releases)
+for changes.
+
+## Uninstall
+
+On the server, stop any running collector, then remove the binaries and the
+`aken` user:
+
+```sh
+curl -fsSL https://aken.dev/install.sh | sudo bash -s -- --uninstall
+```
+
+This keeps `/var/lib/aken` (local audit copies and placeholder mappings) and
+`/etc/aken` (configuration). To delete those too, run this on the server instead:
+
+```sh
+curl -fsSL https://aken.dev/install.sh | sudo bash -s -- --uninstall --purge
+```
+
+The equivalent manual commands on the server are:
+
+```sh
+sudo rm -f /usr/local/bin/aken /usr/local/libexec/aken
+if getent passwd aken >/dev/null; then sudo userdel aken; fi
+```
+
+To purge the saved state and configuration manually, run this on the server:
+
+```sh
+sudo rm -rf /var/lib/aken /etc/aken
+```
+
+On your machine, remove the registration for the agent you use:
+
+```sh
+claude mcp remove aken
+```
+
+For Codex CLI, run `codex mcp remove aken`. For Cursor, remove the `aken`
+entry from `mcpServers` in your project's `.cursor/mcp.json` or your global
+`~/.cursor/mcp.json`.
+
+If you installed with npm, remove the package on your machine:
+
+```sh
+npm uninstall -g aken-mcp
+```
+
+If you used the script installer with its default directory, remove the binary
+on your machine instead:
+
+```sh
+rm ~/.local/bin/aken-mcp
+```
+
+If you selected another `--bin-dir`, remove `aken-mcp` from that directory.
+To delete the saved session, including its token and keys, run this on your
+Linux machine:
+
+```sh
+rm -r ~/.config/aken
+```
+
+On macOS, use this path instead:
+
+```sh
+rm -r "$HOME/Library/Application Support/aken"
+```
+
+Removing these files does not delete content already shared in an agent transcript.
 
 ## Collector installer details
 
@@ -105,17 +229,17 @@ a clean environment with `HOME`, `USER`, and `LOGNAME` set for `aken` and `TERM`
 kept, no capabilities, and `no_new_privs`. Then it runs the collector. Started
 as any other user, it runs the collector as that user, so `sudo -u aken aken`
 keeps working. The collector itself refuses root. The launcher's text is in
-[Install on the server by hand](#install-on-the-server-by-hand).
+[Install on the server by hand](verify.md#install-on-the-server-by-hand).
 
 The script creates the unprivileged `aken` user and `/var/lib/aken` state
 directory with mode `0700`, owned by `aken`. It adds `aken` to `adm` and
-`systemd-journal` where those groups exist. It prints the version, through
-the launcher, and the `sudo aken collect --help` hint.
+`systemd-journal` where those groups exist. It prints the version through
+the launcher, lists what it created, and shows commands to start and uninstall.
 
 The script does not run cosign or offer `--skip-signature-check`. The install
 script is the trust root of the install path; verify it with
 `cosign verify-blob` if you do not trust the host that served it. See
-[Verify the script](#verify-the-script).
+[Verify the script](verify.md#verify-the-script).
 
 To select a release, replace `<tag>` with its tag:
 
@@ -127,19 +251,7 @@ curl -fsSL https://aken.dev/install.sh | sudo bash -s -- --version <tag>
 remaining arguments. Verify the selected release's script if you need to
 check its signature before execution.
 
-## Run once
-
-To download the collector, collect logs, and remove the temporary binary:
-
-```sh
-curl -fsSL https://aken.dev/run.sh | sudo bash -s -- collect --unit nginx --since 1h
-```
-
-To open a live session instead:
-
-```sh
-curl -fsSL https://aken.dev/run.sh | sudo bash -s -- serve
-```
+## Run-once details
 
 The canonical script URL is
 `https://github.com/akenhq/aken/releases/latest/download/run.sh`.
@@ -183,213 +295,10 @@ requires `setpriv` and `getent`. Once mode reads collector input from `/dev/tty`
 so the approval screen can work while the script arrives through a pipe.
 Run it from a terminal.
 
-## Verify the script
+[Verify the script](verify.md#verify-the-script).
 
-Download `install.sh` and `install.sh.sigstore.json` from the same release.
-Replace `<tag>` with the release tag:
+[Verify a release by hand](verify.md#verify-a-release-by-hand).
 
-```sh
-curl -fsSL "https://github.com/akenhq/aken/releases/download/<tag>/install.sh" -o install.sh
-curl -fsSL "https://github.com/akenhq/aken/releases/download/<tag>/install.sh.sigstore.json" -o install.sh.sigstore.json
-```
+[Install on the server by hand](verify.md#install-on-the-server-by-hand).
 
-Install [cosign](https://github.com/sigstore/cosign/releases), then verify:
-
-```sh
-cosign verify-blob \
-  --bundle install.sh.sigstore.json \
-  --certificate-identity "https://github.com/akenhq/aken/.github/workflows/release.yml@refs/tags/<tag>" \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  install.sh
-```
-
-If verification fails, stop. Read the verified script, then run that local
-copy without selecting a different version:
-
-```sh
-less install.sh
-sudo bash install.sh
-```
-
-For once mode, download `run.sh` and `run.sh.sigstore.json` from the same
-release and substitute those names in the verification command.
-For the local MCP, use `install-mcp.sh` and `install-mcp.sh.sigstore.json`,
-then run the verified copy with `bash install-mcp.sh` as your normal user.
-All three rendered scripts are signed release assets and are listed in
-`SHA256SUMS`. The source templates in `packaging/` are unrendered and refuse
-to run.
-
-## Verify a release by hand
-
-### Download
-
-Download the assets for your operating system and architecture from the
-[releases page](https://github.com/akenhq/aken/releases), together with
-`SHA256SUMS` and `SHA256SUMS.sigstore.json`. Keep them in one download directory.
-
-| Platform | Collector | Local MCP | Relay |
-|---|---|---|---|
-| Linux amd64 | `aken_linux_amd64` | `aken-mcp_linux_amd64` | `aken-relay_linux_amd64` |
-| Linux arm64 | `aken_linux_arm64` | `aken-mcp_linux_arm64` | `aken-relay_linux_arm64` |
-| macOS arm64 | `aken_darwin_arm64` | `aken-mcp_darwin_arm64` | `aken-relay_darwin_arm64` |
-
-In the commands below, replace `<tag>` with the release tag you downloaded.
-
-### Verify the signature
-
-Install [cosign](https://github.com/sigstore/cosign/releases), then run this
-command in your download directory:
-
-```sh
-cosign verify-blob \
-  --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity "https://github.com/akenhq/aken/.github/workflows/release.yml@refs/tags/<tag>" \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  SHA256SUMS
-```
-
-This proves that the checksum file was produced by this repository's release
-workflow, at that tag, on GitHub's runners. If verification fails, stop.
-
-### Verify the checksum
-
-Run this command in your download directory. If verification fails, stop.
-
-```sh
-sha256sum -c --ignore-missing SHA256SUMS
-```
-
-### Verify the build attestation
-
-With the GitHub CLI (`gh`) installed, run this command for the Linux amd64
-collector, or substitute the asset you downloaded:
-
-```sh
-gh attestation verify aken_linux_amd64 --repo akenhq/aken
-```
-
-Attestations exist only for releases made after the repository became public.
-
-### Reproduce the build
-
-Optional, and the strongest check: install Go 1.27.1, then clone the repository
-and run the same commands as the release workflow:
-
-```sh
-git clone https://github.com/akenhq/aken.git
-cd aken
-git checkout <tag>
-make release sums VERSION=<tag>
-```
-
-Compare the binary entries in `dist/SHA256SUMS` with the same entries in the
-published `SHA256SUMS` from your download directory. Their hashes must match.
-The published file also lists the rendered scripts and SBOMs.
-
-## Install on the server by hand
-
-After verification, run the following commands as root in the download
-directory on your Debian or Ubuntu server. Set `ARCH=amd64` for x86_64 or
-`ARCH=arm64` for aarch64 in that shell before you run them.
-
-Install the collector with root ownership so the collector user cannot replace it:
-
-```sh
-install -d -o root -g root -m 0755 /usr/local/libexec
-install -o root -g root -m 0755 "aken_linux_${ARCH}" /usr/local/libexec/aken
-```
-
-Install the launcher as `/usr/local/bin/aken`. This is `packaging/launcher.sh` at
-the release tag, the same text the install script writes:
-
-```sh
-cat > /usr/local/bin/aken <<'AKEN_LAUNCHER'
-#!/bin/sh
-# Aken launcher. install.sh installs this file as /usr/local/bin/aken and the
-# collector as /usr/local/libexec/aken. Started as root, it switches to the
-# unprivileged aken user, with that user's groups, a clean environment, no
-# capabilities and no_new_privs, and then runs the collector. Started as any
-# other user, it runs the collector as that user. The collector refuses root.
-set -eu
-PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-export PATH
-collector=/usr/local/libexec/aken
-if [ "$(id -u)" -ne 0 ]; then
-  exec "$collector" "$@"
-fi
-if ! getent passwd aken >/dev/null 2>&1; then
-  printf '%s\n' 'aken: the aken user does not exist; run install.sh first' >&2
-  exit 1
-fi
-exec /usr/bin/setpriv --reset-env --reuid=aken --regid=aken --init-groups \
-  --inh-caps=-all --no-new-privs -- "$collector" "$@"
-AKEN_LAUNCHER
-chmod 0755 /usr/local/bin/aken
-```
-
-Create the dedicated system user if it does not exist, with a home directory
-and no login shell:
-
-```sh
-if ! getent passwd aken >/dev/null; then
-  useradd --system --user-group --home-dir /var/lib/aken --create-home --shell /usr/sbin/nologin aken
-fi
-```
-
-Restrict access to the state directory to its owner:
-
-```sh
-chmod 0700 /var/lib/aken
-```
-
-Give the collector user ownership of its state directory:
-
-```sh
-chown aken:aken /var/lib/aken
-```
-
-Add the user to the groups that exist to give it read access to journald and
-the system logs:
-
-```sh
-for g in adm systemd-journal; do
-  if getent group "$g" >/dev/null; then
-    usermod -aG "$g" aken
-  fi
-done
-```
-
-Optionally, create `/etc/aken/rules.json` as root for site-specific redaction
-rules and make it readable by `aken`. See [Redaction](redaction.md) for the
-format and how to check your rules before uploading.
-
-## Install the MCP by hand
-
-Verify your MCP asset as above. Create `~/.local/bin` if needed, then install
-the macOS arm64 asset, or substitute the Linux asset for your architecture:
-
-```sh
-mkdir -p ~/.local/bin
-install -m 0755 aken-mcp_darwin_arm64 ~/.local/bin/aken-mcp
-```
-
-Add the binary directory to your PATH, including in your shell profile:
-
-```sh
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-Then [connect your agent](mcp.md#install) and [join a session](mcp.md#join-a-session).
-
-## Run
-
-Run a smoke test. Replace `<unit>` with a journald unit:
-
-```sh
-sudo aken collect --dry-run --unit <unit>
-```
-
-The `aken` command switches to the `aken` user before the collector starts.
-This collects, redacts, and shows the review screen without uploading.
-See [Live sessions](serve.md) to open a session, [Collect logs](collect.md)
-to send an artifact, and [Docker logs](docker.md) to configure container logging.
+[Install the MCP by hand](verify.md#install-the-mcp-by-hand).

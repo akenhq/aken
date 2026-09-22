@@ -2,7 +2,6 @@
 package collect
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
 	"strings"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"github.com/akenhq/aken/internal/redact"
+	"github.com/akenhq/aken/internal/screen"
 	"github.com/akenhq/aken/protocol"
 )
 
@@ -45,7 +45,6 @@ Upload   2 lines, 1.0 KiB, 1 chunk, TTL 4h, relay https://relay.aken.dev
 Local    /var/lib/aken/runs/ (kept 30 days; includes the placeholder mapping)
 
 [s] send   [v] view everything   [f] view flagged lines   [a] abort
->
 `
 	if out.String() != want {
 		t.Fatalf("screen =\n%s\nwant\n%s", out.String(), want)
@@ -77,7 +76,7 @@ func TestReview(t *testing.T) {
 			s := testScreen()
 			s.options.DryRun = tt.dry
 			var out bytes.Buffer
-			choice, err := review(bufio.NewReader(strings.NewReader(tt.input)), &out, s, tt.dry, 1)
+			choice, err := review(screen.NewInput(strings.NewReader(tt.input), -1, false), &out, s, tt.dry, 1)
 			if err != nil || choice != tt.choice || !strings.Contains(out.String(), tt.want) || tt.absent != "" && strings.Contains(out.String(), tt.absent) {
 				t.Fatalf("choice %q, err %v, output %s", choice, err, out.String())
 			}
@@ -86,10 +85,10 @@ func TestReview(t *testing.T) {
 	s := testScreen()
 	s.sources[0].flags = nil
 	var out bytes.Buffer
-	if _, err := review(bufio.NewReader(strings.NewReader("f\ns\n")), &out, s, false, 40); err != nil || !strings.Contains(out.String(), "no flagged lines\n>\n") {
+	if _, err := review(screen.NewInput(strings.NewReader("f\ns\n"), -1, false), &out, s, false, 40); err != nil || !strings.Contains(out.String(), "no flagged lines\n>\n") {
 		t.Fatalf("empty flags: %s, %v", out.String(), err)
 	}
-	if _, err := review(bufio.NewReader(strings.NewReader("")), &out, s, false, 40); err == nil {
+	if _, err := review(screen.NewInput(strings.NewReader(""), -1, false), &out, s, false, 40); err == nil {
 		t.Fatal("expected input error")
 	}
 }
@@ -122,7 +121,7 @@ func TestReviewEscapes(t *testing.T) {
 	s.sources[0].lines, s.sources[0].flags = result.Lines, result.Flags
 	for _, command := range []string{"v", "f"} {
 		var out bytes.Buffer
-		_, err := review(bufio.NewReader(strings.NewReader(command+"\ns\n")), &out, s, false, 40)
+		_, err := review(screen.NewInput(strings.NewReader(command+"\ns\n"), -1, false), &out, s, false, 40)
 		if err != nil || !strings.Contains(out.String(), `unit:api:1 ! \x1b[2J\x0d\u{202e}\xff aB3dE5gH7jK9mN1pQ2sT4`) {
 			t.Fatalf("viewer = %q, %v", out.String(), err)
 		}
@@ -158,7 +157,7 @@ func TestFlagsScreenAndView(t *testing.T) {
 		s.manifest.Redaction.Flags, s.idFlags = int64(tt.inspect), tt.ids
 		for _, command := range []string{"f", "v"} {
 			var out bytes.Buffer
-			_, err := review(bufio.NewReader(strings.NewReader(command+"\ns\n")), &out, s, false, 100)
+			_, err := review(screen.NewInput(strings.NewReader(command+"\ns\n"), -1, false), &out, s, false, 100)
 			if err != nil || !strings.Contains(out.String(), tt.want+"\n") {
 				t.Fatalf("screen = %s, error = %v", out.String(), err)
 			}

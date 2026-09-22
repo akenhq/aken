@@ -30,10 +30,11 @@ func ResolveContainers(ctx context.Context, name string) ([]string, error) {
 		return nil, err
 	}
 	cmd := execCommand(ctx, path, "--no-pager", "-q", "-F", "CONTAINER_NAME") //nolint:gosec // fixed journalctl path and arguments
-	var stdout, stderr bytes.Buffer
+	var stdout bytes.Buffer
+	var stderr CommandStderr
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		first, _, _ := strings.Cut(stderr.String(), "\n")
+		first := stderr.String()
 		return nil, fmt.Errorf("journalctl: %w: %s", err, first)
 	}
 	var names []string
@@ -57,7 +58,7 @@ func ResolveContainers(ctx context.Context, name string) ([]string, error) {
 		return matches, nil
 	}
 	if len(names) == 0 {
-		return nil, errors.New("no container logs in the journal; is the docker logging driver journald? See docs/docker.md")
+		return nil, errors.New("no container logs in the journal; is the docker logging driver journald? See https://github.com/akenhq/aken/blob/main/docs/docker.md")
 	}
 	return nil, fmt.Errorf("no container named %q in the journal; known names: %s", name, strings.Join(names[:min(20, len(names))], ", "))
 }
@@ -101,12 +102,13 @@ func ReadJournal(ctx context.Context, spec Spec, since, until time.Time) (*Sourc
 	}
 	argv := []string{"--no-pager", "-q", "--utc", "-o", "short-iso-precise", "--no-hostname", fmt.Sprintf("--since=@%d", since.Unix()), fmt.Sprintf("--until=@%d", until.Unix()), match}
 	cmd := execCommand(ctx, path, argv...) //nolint:gosec // argv is fixed and the name is validated
-	var stdout, stderr bytes.Buffer
+	var stdout bytes.Buffer
+	var stderr CommandStderr
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		first, _, _ := strings.Cut(stderr.String(), "\n")
-		return nil, fmt.Errorf("journalctl: %w: %s", err, first)
+		first := stderr.String()
+		return &Source{Stderr: first, Lines: splitLines(stdout.Bytes())}, fmt.Errorf("journalctl: %w: %s", err, first)
 	}
-	return &Source{Spec: spec, Name: string(spec.Kind) + ":" + spec.Target, Lines: splitLines(stdout.Bytes()), Since: since, Until: until}, nil
+	return &Source{Spec: spec, Name: string(spec.Kind) + ":" + spec.Target, Lines: splitLines(stdout.Bytes()), Since: since, Until: until, Stderr: stderr.String()}, nil
 }

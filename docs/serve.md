@@ -19,7 +19,12 @@ Start the collector with `sudo`. The installed `aken` command is a launcher
 that switches to the unprivileged `aken` user before the collector starts;
 the collector itself refuses root. Follow [Install and verify](install.md)
 to give that user membership in `adm` and `systemd-journal` where those
-groups exist.
+groups exist. From a source build, run the collector as any unprivileged user.
+Help works as root. A real run as root exits 1 with:
+
+```text
+aken: refusing to run as root. The installed aken command switches to the aken user for you: run sudo aken serve. From a source build, run it as any unprivileged user.
+```
 
 File jobs must stay under `/var/log` or a directory you add with `--allow DIR`.
 You can repeat `--allow`. At level 1 you can also grant a directory or a single
@@ -135,12 +140,18 @@ For a single job, the first line is `Job j7 from the agent: read_file` and
 the list has one row. Search rows show the glob, regex, and file count, such
 as `12 files`, followed by `; first: a, b, c and 9 more`.
 
-| Input | Action |
+| Key | Action |
 |---|---|
 | `a` | Approve the job or every job in the plan |
-| `o` | Approve, granting only the paths and only for this job; offered only when a row lies outside the scope |
+| `o` | Approve, granting only the paths and only for this job; offered only when a row lies outside the scope, as [Paths outside the scope](#paths-outside-the-scope) describes |
 | `d` | Deny the job or every job in the plan |
 | `v` | Show the raw parameters and return to the prompt |
+
+The key acts as soon as it is pressed; there is nothing to confirm with Enter.
+The action is echoed after the `>` marker, and a key that is not offered does
+nothing. Keystrokes that ran past `v` output are dropped when the screen asks
+again, so paging through parameters does not spill into the answer. Ctrl-C at
+a prompt ends the session, as it does anywhere else.
 
 The collector marks these sensitive paths:
 
@@ -178,7 +189,7 @@ Allowing once adds only these paths, and only for this job:
 >
 ```
 
-| Answer | Grant | Lasts |
+| Key | Grant | Lasts |
 |---|---|---|
 | `a` | The directory of each row, exactly as `--allow` would have | Until the session ends |
 | `o` | The path of each row, and nothing else in its directory | This job only |
@@ -206,7 +217,7 @@ before the next job is read.
 
 `o` is offered only when every `+` row can be served by the names it asked
 for. A `search` row cannot, because its glob reads whatever its directory
-holds, so a job containing one offers `a` and `d` alone and says why:
+holds, so a job containing one leaves the key out and says why:
 
 ```text
 This job cannot be allowed once: a glob needs its directory.
@@ -249,7 +260,7 @@ same flags shown by `f` in collect, excluding hex IDs or hashes:
 >
 ```
 
-Enter `s` to send or `d` to drop. Dropping sends a `denied` result with error
+Press `s` to send or `d` to drop. Dropping sends a `denied` result with error
 `dropped after review`. At level 0, the summary names the flag count and does
 not wait. A result with no flags can still contain sensitive data.
 
@@ -264,6 +275,12 @@ Denied and rejected results have a summary with the reason, for example:
 The first two lines are the same read refused at level 1, where the approval
 screen offered the scope and you declined, and at level 0, where there is no
 screen to offer it on. See [Paths outside the scope](#paths-outside-the-scope).
+
+When `journal`, `docker_logs`, or `systemctl_status` returns no stdout but
+writes a diagnostic to stderr, the result has status `error`. Its error is
+`<command name>: <line>`, using the first non-empty stderr line, up to 200 bytes.
+For example: `journalctl: No journal files were found.`. If stdout and stderr
+are both empty and the command succeeds, the result stays `ok` with zero lines.
 
 Errors give the cause, such as a missing file, a permission problem, or a
 non-regular file. They do not repeat the path or any file content.
@@ -333,6 +350,8 @@ The collector creates this directory with mode `0700`:
 
 The token does not appear in these files. The mapping contains original
 sensitive values. Protect the directory as you protect the source logs.
+To look up a placeholder's original value, run `sudo aken reveal`; see
+[Redaction](redaction.md#looking-up-original-values).
 
 | Flag | Meaning |
 |---|---|
@@ -349,8 +368,18 @@ Press Ctrl-C in the server terminal, or run this on your machine:
 aken-mcp end
 ```
 
+At an approval or review prompt the terminal is in raw mode, so Ctrl-C reaches
+the collector as a keystroke rather than as a signal. It ends the session the
+same way, after printing `Ctrl-C: ending the session.`.
+
 The collector also ends on expiry or a relay 404 or 409, including when the
-MCP ends the session or the relay loses it. It deletes the relay session,
+MCP ends the session or the relay loses it. A relay 404 prints:
+
+```text
+aken: the session was ended on the relay: aken-mcp end ran on your machine, or the relay lost the session
+```
+
+The collector exits 1 in either case. It deletes the relay session,
 ignores a deletion 404, writes the mapping, and sets `ended_at` in
 `session.json`. The final line has this form:
 
@@ -366,7 +395,9 @@ Session ended: 12 jobs, 10 sent, 1 denied, 1 rejected. Local copy: <dir>
 | `1` | Failure or refusal, including relay termination or expiry |
 | `2` | Usage error |
 
-Running as root is a refusal. Without a terminal on stdin, serve exits 1 with:
+An invalid `--relay`, a relative `--allow`, and an unknown `--keep-category`
+are usage errors. Bad flags name the flag and point to `aken serve --help`
+without printing usage. Running as root is a refusal. Without a terminal on stdin, serve exits 1 with:
 
 ```text
 aken: serve needs a terminal
@@ -376,6 +407,8 @@ aken: serve needs a terminal
 
 `--relay URL` selects the relay base URL. The default is
 `https://relay.aken.dev`. Use the same URL with `aken-mcp join --relay URL`.
+Use HTTPS, or HTTP only on loopback, such as `http://127.0.0.1:7788`.
+The URL must have no path, query, or user info.
 `--ttl D` sets the session lifetime, default `8h`, maximum `24h`.
 
 If the relay does not advertise live session support, the collector exits 1:
@@ -383,3 +416,10 @@ If the relay does not advertise live session support, the collector exits 1:
 ```text
 aken: relay <url> does not support live sessions
 ```
+
+Connection failures say `cannot reach the relay at <url>: <cause>`.
+A missing or invalid info endpoint says
+`<url> is not an Aken relay: it has no /v0/info`.
+Rate limit and capacity errors show a wait time when the relay provides one
+and link to [running your own relay](relay.md). The collector does not retry
+a 429 response.

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -17,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/akenhq/aken/internal/screen"
+	"github.com/akenhq/aken/internal/source"
 	"github.com/akenhq/aken/protocol"
 	"github.com/akenhq/aken/relay"
 )
@@ -73,7 +76,7 @@ func startLive(t *testing.T, level int, input io.Reader, ttl time.Duration) *liv
 	o := Options{Level: level, TTL: ttl, RelayURL: server.URL, Allow: []string{dir}, StateDir: t.TempDir(), Now: time.Now, Argv: []string{"serve"}}
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &liveTest{o: o, out: newOutput(), errs: newOutput(), ctx: ctx, cancel: cancel, done: make(chan int, 1), jobSeq: 1, resultSeq: 1}
-	go func() { h.done <- Run(ctx, o, input, h.out, h.errs, 40) }()
+	go func() { h.done <- Run(ctx, o, screen.NewInput(input, -1, true), h.out, h.errs, 40) }()
 	t.Cleanup(func() {
 		if !h.stopped {
 			h.stop(t)
@@ -374,7 +377,7 @@ func TestLiveEnding(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("blocked at approval")
 		}
-		if got := h.errs.String(); got != "aken: the session was ended on the relay\n" {
+		if got := h.errs.String(); got != "aken: the session was ended on the relay: aken-mcp end ran on your machine, or the relay lost the session\n" {
 			t.Fatalf("stderr = %q", got)
 		}
 		if !strings.Contains(h.out.String(), "Session ended:") {
@@ -430,12 +433,12 @@ func TestUnsupportedRelayAndOptions(t *testing.T) {
 		if r.URL.Path != "/v0/info" {
 			t.Error("unexpected request", r.URL.Path)
 		}
-		_ = json.NewEncoder(w).Encode(protocol.Info{})
+		_ = json.NewEncoder(w).Encode(protocol.Info{ProtocolVersions: []int{1}})
 	}))
 	defer server.Close()
 	o := Options{TTL: time.Hour, RelayURL: server.URL, StateDir: t.TempDir()}
 	var out, errs bytes.Buffer
-	if code := Run(context.Background(), o, strings.NewReader(""), &out, &errs, 40); code != 1 || !strings.Contains(errs.String(), "does not support live sessions") || out.Len() != 0 {
+	if code := Run(context.Background(), o, screen.NewInput(strings.NewReader(""), -1, true), &out, &errs, 40); code != 1 || !strings.Contains(errs.String(), "does not support live sessions") || out.Len() != 0 {
 		t.Fatalf("code %d, %s %s", code, &out, &errs)
 	}
 	for _, change := range []func(*Options){func(o *Options) { o.Level = 2 }, func(o *Options) { o.TTL = 0 }, func(o *Options) { o.TTL = 25 * time.Hour }, func(o *Options) { o.Retention = -1 }, func(o *Options) { o.Allow = []string{"relative"} }, func(o *Options) { o.RelayURL = "bad" }} {
@@ -443,6 +446,34 @@ func TestUnsupportedRelayAndOptions(t *testing.T) {
 		change(&bad)
 		if validate(bad) == nil {
 			t.Fatal("accepted invalid options")
+		}
+	}
+}
+
+func TestEmptyCommandResults(t *testing.T) {
+	originalJournal, originalExec := readJournal, execCommand
+	t.Cleanup(func() { readJournal, execCommand = originalJournal, originalExec })
+	readJournal = func(context.Context, source.Spec, time.Time, time.Time) (*source.Source, error) {
+		return &source.Source{Stderr: "No journal files were found."}, nil
+	}
+	execCommand = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, os.Args[0], "-test.run=^TestCommandHelper$", "--", "--serve-command-helper", "stderr", "4")
+	}
+	h := startLive(t, 0, strings.NewReader(""), time.Hour)
+	h.join(t, "cli", false)
+	for _, tt := range []struct {
+		name    string
+		params  any
+		command string
+	}{
+		{"journal", protocol.JournalParams{Unit: "api"}, "journalctl"},
+		{"docker_logs", protocol.DockerLogsParams{Container: "abcdef123456"}, "journalctl"},
+		{"systemctl_status", protocol.SystemctlStatusParams{Unit: "api"}, "systemctl"},
+	} {
+		h.post(t, job("j1", tt.name, tt.params), 1)
+		r := h.results(t, 1)[0]
+		if r.Status != "error" || r.Error != tt.command+": No journal files were found." || len(r.Lines) != 0 {
+			t.Fatalf("%s: %+v", tt.name, r)
 		}
 	}
 }

@@ -26,6 +26,7 @@ type Config struct{ AccountID, Bucket, AccessKeyID, SecretAccessKey string }
 
 func ConfigFromEnv() (Config, error) {
 	var cfg Config
+	var missing []string
 	for _, field := range []struct {
 		name  string
 		value *string
@@ -35,8 +36,11 @@ func ConfigFromEnv() (Config, error) {
 	} {
 		*field.value = os.Getenv(field.name)
 		if *field.value == "" {
-			return Config{}, fmt.Errorf("missing %s", field.name)
+			missing = append(missing, field.name)
 		}
+	}
+	if len(missing) != 0 {
+		return Config{}, fmt.Errorf("missing environment variables: %s", strings.Join(missing, ", "))
 	}
 	return cfg, nil
 }

@@ -62,6 +62,13 @@ func TestLimits(t *testing.T) {
 			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body.Error != code || w.Header().Get("Content-Type") != "application/json" {
 				t.Fatalf("body = %s, error = %v", w.Body, err)
 			}
+			message := "the relay is at capacity; retry later"
+			if code == "rate_limited" {
+				message = "too many requests from this address; retry in " + retry + "s"
+			}
+			if body.Message != message {
+				t.Fatalf("message = %q, want %q", body.Message, message)
+			}
 		}
 	}
 	for range 60 {

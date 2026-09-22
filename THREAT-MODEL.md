@@ -5,6 +5,15 @@ approvals, alongside one-shot mode. The mode sections describe current
 behavior. The remaining design includes controls for later phases, including
 exec and background mode. See [README.md](README.md) for what works today.
 
+## What each party sees
+
+| Party | What it sees |
+|---|---|
+| Server terminal | Everything collected, including original values and the placeholder mapping. |
+| Relay | Session IDs, sizes, timing, client addresses, envelopes, and ciphertext; never content or tokens. |
+| Your machine and the MCP | Redacted content, the token, and content keys. |
+| Agent and its LLM provider | Redacted content the agent reads; log lines can prompt-inject the agent. |
+
 ## What Aken is
 
 Aken has a collector on the server, a local MCP on the developer's machine,
@@ -225,7 +234,7 @@ builds, an unprivileged user, and no listener.
 The install script is the trust root of the install path; verify it with
 `cosign verify-blob` if you do not trust the host that served it. The script
 checks the binary against an embedded hash; it does not run cosign itself.
-See [Install and verify](docs/install.md#verify-the-script).
+See [Verify the script](docs/verify.md#verify-the-script).
 
 The installed `aken` command is a root-owned shell launcher of a dozen lines.
 Started as root, it switches to the `aken` user with `setpriv`, with that

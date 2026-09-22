@@ -2,7 +2,6 @@
 package serve
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -26,6 +25,20 @@ const (
 	verdictApprove
 	verdictOnce
 )
+
+var approvalChoices = []screen.Choice{{Key: 'a', Label: "approve"}, {Key: 'd', Label: "deny"}, {Key: 'v', Label: "view params"}}
+var flagChoices = []screen.Choice{{Key: 's', Label: "send"}, {Key: 'd', Label: "drop"}}
+
+// approvalKeys puts allow once between approve and deny when every row outside
+// the scope can be served by the name it asked for. The key is absent
+// otherwise, so it cannot be pressed where it would mean nothing.
+func approvalKeys(once bool) []screen.Choice {
+	if !once {
+		return approvalChoices
+	}
+	keys := []screen.Choice{approvalChoices[0], {Key: 'o', Label: "allow once"}}
+	return append(keys, approvalChoices[1:]...)
+}
 
 // widening is a row whose path lies outside the scope, with the two grants that
 // would let it run: dirs, added to the scope until the session ends, and paths,
@@ -57,7 +70,7 @@ func onceReason(widenings []widening) string {
 	return ""
 }
 
-func approve(stdin *bufio.Reader, stdout io.Writer, job protocol.Job, jobs []preparedJob, widenings []widening, scope []string, pageLines int) (verdict, error) {
+func approve(stdin *screen.Input, stdout io.Writer, job protocol.Job, jobs []preparedJob, widenings []widening, scope []string, pageLines int) (verdict, error) {
 	for {
 		title := job.Name
 		if job.Name == "plan" {
@@ -93,51 +106,44 @@ func approve(stdin *bufio.Reader, stdout io.Writer, job protocol.Job, jobs []pre
 				_, _ = fmt.Fprintf(stdout, "\nThis job cannot be allowed once: %s.\n", visible(onceReason(widenings)))
 			}
 		}
-		if once {
-			_, _ = fmt.Fprint(stdout, "\n[a] approve   [o] allow once   [d] deny   [v] view params\n>\n")
-		} else {
-			_, _ = fmt.Fprint(stdout, "\n[a] approve   [d] deny   [v] view params\n>\n")
+		_, _ = fmt.Fprintln(stdout)
+		choices := approvalKeys(once)
+		screen.Choices(stdout, choices)
+		key, err := screen.Ask(stdin, stdout, choices)
+		if err != nil {
+			return verdictDeny, err
 		}
-		for {
-			input, err := stdin.ReadString('\n')
-			if err != nil {
-				return verdictDeny, err
+		switch key {
+		case 'a':
+			return verdictApprove, nil
+		case 'o':
+			return verdictOnce, nil
+		case 'd':
+			return verdictDeny, nil
+		}
+		// The params are paged, then the screen is drawn again so the answer
+		// is given to the job description rather than to the last page.
+		var out bytes.Buffer
+		if err := json.Indent(&out, job.Params, "", "  "); err != nil {
+			return verdictDeny, err
+		}
+		lines := strings.Split(out.String(), "\n")
+		for i, line := range lines {
+			lines[i] = visible(line)
+		}
+		lines = append(lines, "Resolved paths:")
+		for _, p := range jobs {
+			for _, path := range p.paths {
+				lines = append(lines, visible(path))
 			}
-			switch answer := strings.TrimSpace(input); {
-			case answer == "a":
-				return verdictApprove, nil
-			case answer == "o" && once:
-				return verdictOnce, nil
-			case answer == "d":
-				return verdictDeny, nil
-			case answer == "v":
-				var out bytes.Buffer
-				if err := json.Indent(&out, job.Params, "", "  "); err != nil {
-					return verdictDeny, err
-				}
-				lines := strings.Split(out.String(), "\n")
-				for i, line := range lines {
-					lines[i] = visible(line)
-				}
-				lines = append(lines, "Resolved paths:")
-				for _, p := range jobs {
-					for _, path := range p.paths {
-						lines = append(lines, visible(path))
-					}
-				}
-				if err := screen.Page(stdin, stdout, lines, pageLines); err != nil {
-					return verdictDeny, err
-				}
-			default:
-				_, _ = fmt.Fprint(stdout, ">\n")
-				continue
-			}
-			break
+		}
+		if err := screen.Page(stdin, stdout, lines, pageLines); err != nil {
+			return verdictDeny, err
 		}
 	}
 }
 
-func reviewFlags(stdin *bufio.Reader, stdout io.Writer, p preparedJob, result protocol.Result, flags []redact.Flag, now time.Time) (bool, error) {
+func reviewFlags(stdin *screen.Input, stdout io.Writer, p preparedJob, result protocol.Result, flags []redact.Flag, now time.Time) (bool, error) {
 	_, _ = fmt.Fprintf(stdout, "%s  %s %s  %d lines, %d strings to inspect\n", now.UTC().Format("15:04:05Z"), p.job.Name, visible(p.target), len(result.Lines), result.Redaction.Flags)
 	seen := map[int]bool{}
 	for _, flag := range flags {
@@ -155,18 +161,10 @@ func reviewFlags(stdin *bufio.Reader, stdout io.Writer, p preparedJob, result pr
 		}
 		_, _ = fmt.Fprintf(stdout, "  %s ! %s\n", visible(location), visible(line))
 	}
-	_, _ = fmt.Fprint(stdout, "[s] send   [d] drop\n>\n")
-	for {
-		input, err := stdin.ReadString('\n')
-		if err != nil {
-			return false, err
-		}
-		switch strings.TrimSpace(input) {
-		case "s":
-			return true, nil
-		case "d":
-			return false, nil
-		}
-		_, _ = fmt.Fprint(stdout, ">\n")
+	screen.Choices(stdout, flagChoices)
+	key, err := screen.Ask(stdin, stdout, flagChoices)
+	if err != nil {
+		return false, err
 	}
+	return key == 's', nil
 }

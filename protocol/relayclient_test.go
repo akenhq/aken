@@ -101,8 +101,8 @@ func TestRelayURL(t *testing.T) {
 			if tt.valid && strings.HasSuffix(client.BaseURL, "/") {
 				t.Fatal("trailing slash")
 			}
-			if err != nil && strings.Contains(err.Error(), "private") {
-				t.Fatal("error exposes input")
+			if err != nil && err.Error() != fmt.Sprintf("invalid relay URL %q: use https://, or http:// only for a loopback address such as http://127.0.0.1:7788, with no path, query or user info", tt.url) {
+				t.Fatal(err)
 			}
 		})
 	}
@@ -154,7 +154,7 @@ func TestRelayTransportRetry(t *testing.T) {
 	_, err = client.Info(t.Context())
 	// The transport cause stays in the error so the human learns why the upload failed;
 	// the URL carries only the public session id, never a credential.
-	if attempts != 3 || err == nil || !strings.Contains(err.Error(), "relay transport failed: ") || !strings.Contains(err.Error(), "private transport detail") {
+	if attempts != 3 || err == nil || err.Error() != "cannot reach the relay at https://example.com: private transport detail" {
 		t.Fatal("retry limit or error", attempts, err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -179,6 +179,7 @@ func TestRelayResponses(t *testing.T) {
 		{"empty error", 400, `{}`, "http_400", false},
 		{"oversized error", 400, strings.Repeat("x", (2<<20)+1), "http_400", false},
 		{"invalid JSON", 200, "bad", "", false},
+		{"other JSON", 200, `{"hello":"world"}`, "", false},
 		{"oversized JSON", 200, strings.Repeat("x", (2<<20)+1), "", false},
 		{"oversized chunk", 200, strings.Repeat("x", protocol.ChunkSize+protocol.ChunkOverhead+1), "", true},
 	} {
@@ -202,7 +203,11 @@ func TestRelayResponses(t *testing.T) {
 			if err == nil || attempts.Load() != 1 {
 				t.Fatal("expected error without retry", err)
 			}
-			if tt.code != "" {
+			if tt.status == 404 {
+				if err.Error() != server.URL+" is not an Aken relay: it has no /v0/info" {
+					t.Fatal(err)
+				}
+			} else if tt.code != "" {
 				var relayErr *protocol.RelayError
 				if !errors.As(err, &relayErr) || relayErr.Status != tt.status || relayErr.Code != tt.code {
 					t.Fatal("error mapping", err)
@@ -396,5 +401,40 @@ func TestSessionKeyEncoding(t *testing.T) {
 		if _, ok := protocol.DecodeKey(value); ok {
 			t.Fatal("invalid key accepted")
 		}
+	}
+}
+
+func TestRelayLimits(t *testing.T) {
+	for _, tt := range []struct{ code, retry, wait string }{
+		{"rate_limited", "", "a moment"}, {"rate_limited", "45", "45 seconds"},
+		{"rate_limited", "119", "119 seconds"}, {"rate_limited", "120", "2 minutes"},
+		{"over_capacity", "121", "3 minutes"}, {"rate_limited", "invalid", "a moment"},
+	} {
+		t.Run(tt.code+"/"+tt.retry, func(t *testing.T) {
+			attempts := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				attempts++
+				w.Header().Set("Retry-After", tt.retry)
+				w.WriteHeader(http.StatusTooManyRequests)
+				_ = json.NewEncoder(w).Encode(protocol.ErrorResponse{Error: tt.code})
+			}))
+			defer server.Close()
+			client, err := protocol.NewRelayClient(server.URL, [32]byte{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.Info(t.Context())
+			reason := "the relay's rate limit for this address was reached"
+			if tt.code == "over_capacity" {
+				reason = "the relay is at capacity"
+			}
+			want := reason + "; retry in " + tt.wait + ". To avoid relay limits, run your own relay: https://github.com/akenhq/aken/blob/main/docs/relay.md"
+			if err == nil || err.Error() != want || attempts != 1 {
+				t.Fatalf("attempts %d: %v", attempts, err)
+			}
+		})
+	}
+	if got := (&protocol.RelayError{Status: 400, Code: "bad_request"}).Error(); got != "relay: 400 bad_request" {
+		t.Fatal(got)
 	}
 }

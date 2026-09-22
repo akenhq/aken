@@ -7,11 +7,27 @@ session envelopes, addresses, sizes, and ciphertext. It never receives content
 or session tokens. It adds per-IP limits, a capacity guard for directory and R2
 stores, JSON request logs, expiry sweeps, and `/healthz`.
 
+## Hosted relay
+
+`relay.aken.dev` is free and needs no account. One maintainer runs it on a
+best-effort basis under the [terms](https://aken.dev/terms). It runs this binary
+in Germany with Cloudflare R2 storage.
+
+It uses the rate and capacity defaults in the flag table below: 10 session
+creations per hour and 600 requests per minute per address, and 200 live
+sessions. Each artifact can be at most 128 MiB. The maximum lifetime is 24 h.
+
+The hosted relay counts but does not yet enforce the anonymous allowance of
+two servers per developer address per 24 h. It will enforce this allowance
+when accounts launch.
+
+The rest of this page explains how to self-host the relay.
+
 ## Get the binary
 
 Download `aken-relay_<os>_<arch>` from the
 [releases page](https://github.com/akenhq/aken/releases). Follow
-[Install and verify](install.md#download) to verify it, then name it `aken-relay`
+[Install and verify](verify.md#download) to verify it, then name it `aken-relay`
 and put it on your PATH. You can also build from the repository root:
 
 ```sh
@@ -25,6 +41,12 @@ For memory storage, run:
 
 ```sh
 aken-relay serve --store memory
+```
+
+At startup, the relay prints:
+
+```text
+aken-relay listening on http://127.0.0.1:7788 (store memory). Clients pass --relay http://127.0.0.1:7788; health check: http://127.0.0.1:7788/healthz
 ```
 
 The default listener is `127.0.0.1:7788`. Memory sessions are lost on exit.
@@ -44,6 +66,12 @@ For R2, set `AKEN_R2_ACCOUNT_ID`, `AKEN_R2_BUCKET`, `AKEN_R2_ACCESS_KEY_ID`, and
 
 ```sh
 aken-relay serve --store r2
+```
+
+If variables are missing, the relay lists them all. For example:
+
+```text
+aken-relay: missing environment variables: AKEN_R2_ACCOUNT_ID, AKEN_R2_BUCKET
 ```
 
 Sweeps run at startup and every ten minutes. The directory and R2 capacity
@@ -66,6 +94,12 @@ Run `aken-relay serve --help` for usage. All limits must be positive.
 | `--allowance-mode off\|observe\|enforce` | `off` | Anonymous allowance mode |
 | `--allowance-servers N` | `2` | Distinct server addresses per developer address |
 | `--allowance-window DURATION` | `24h` | Rolling allowance window |
+
+When a rate limit is reached, the relay returns HTTP 429 `rate_limited` with
+the message `too many requests from this address; retry in <N>s`. `<N>` is
+the wait in seconds, also given in the `Retry-After` header. When the relay
+is at capacity, it returns HTTP 503 `over_capacity` with the message
+`the relay is at capacity; retry later`.
 
 ## Anonymous allowance
 
@@ -125,3 +159,8 @@ aken-relay admin delete-session SESSION_ID
 ```
 
 This command works only with R2. It succeeds even if the session is already gone.
+If the session ID is invalid, it prints:
+
+```text
+aken-relay: invalid session id: expected 32 lowercase hexadecimal characters
+```

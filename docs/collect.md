@@ -10,6 +10,9 @@
 4. Encrypt and upload the artifact when you choose **send**.
 5. Print the session token so you can join from your own machine.
 
+Before reading sources, a real run checks that stdin is a terminal and that
+the relay is reachable. Dry runs skip these checks.
+
 The token appears once, on the terminal. The collector does not store it
 anywhere. Keep it out of agent chats, shell history, and tickets.
 
@@ -24,7 +27,12 @@ Start the collector with `sudo`. The installed `aken` command is a launcher
 that switches to the unprivileged `aken` user before the collector starts;
 the collector itself refuses root. Follow [Install and verify](install.md)
 to give that user membership in `adm` and `systemd-journal` where those
-groups exist.
+groups exist. From a source build, run the collector as any unprivileged user.
+Help works as root. A real run as root exits 1 with:
+
+```text
+aken: refusing to run as root. The installed aken command switches to the aken user for you: run sudo aken collect. From a source build, run it as any unprivileged user.
+```
 
 File sources must be under `/var/log` or a directory you add with `--allow DIR`.
 The collector reads them through `os.Root` and refuses symlinks that leave the
@@ -50,6 +58,15 @@ so the collector receives the pattern.
 
 Source names are `unit:<name>`, `container:<name>`, and `file:<absolute path>`.
 Files selected by `--glob` also use `file:` names.
+
+If a glob match is missing, unreadable, not a regular file, or a symlink that
+leaves the allowed directories, the collector skips it and prints
+`aken: skipped <absolute path>: <reason>` on stderr. An explicit `--file`
+with the same problem fails the run. If no lines remain, collection fails.
+
+When a journal source has no entries, the hint names the user running the
+collector. If journalctl wrote a diagnostic, the hint ends with
+`; journalctl said: <line>`, using its first non-empty stderr line, up to 200 bytes.
 
 Container IDs of exactly 12 or 64 hex characters match `CONTAINER_ID` or
 `CONTAINER_ID_FULL`, respectively, and use the ID as the source target.
@@ -118,6 +135,12 @@ Local    /var/lib/aken/runs/ (kept 30 days; includes the placeholder mapping)
 >
 ```
 
+Press the key for the choice; it acts at once, with no Enter. The chosen
+action is echoed after the `>` marker, and a key that is not offered does
+nothing. Keystrokes that ran past a listing are dropped when the next screen
+asks, so scrolling through the viewer does not spill into the answer. Ctrl-C
+aborts.
+
 Choose **view everything** to inspect the artifact and **view flagged lines**
 to inspect possible missed values other than hex IDs or UUIDs. Choose **send**
 only when you are ready to share the reviewed content. Choose **abort** to stop
@@ -178,14 +201,22 @@ only lines with strings to inspect, or `v` to view everything.
 The viewer prints one screen at a time (the terminal height, or 40 lines when
 it cannot be read) as `<source>:<line> | <text>`. Flagged
 lines use `!` instead of `|`. At `-- more: Enter, q to stop --`, press Enter
-for more lines or `q` to stop viewing.
+or any other key for more lines, or `q` to stop viewing.
 
 The gutter (`123 |`, `123 !`) is display only and is not part of the upload.
 The viewer shows control characters, invalid bytes and bidirectional-text controls as escapes such as \x1b or \u{202e}; the upload keeps the original bytes.
 Redaction can miss sensitive data; see [Redaction](redaction.md).
 
 Interactive input requires stdin to be a terminal. A real run without one
-exits 1 with `aken: the review screen needs a terminal`.
+fails before reading sources and exits 1 with:
+
+```text
+aken: the review screen needs a terminal; use --dry-run to check a collection without one
+```
+
+When stdin is a terminal, the collector switches it to raw mode for a single
+keypress and restores it afterwards; when the terminal refuses raw mode,
+answers are read as whole lines instead, one choice per line.
 
 ## Dry run
 
@@ -239,6 +270,8 @@ Each file is written once, then set to mode `0400`.
 
 `mapping.json` holds the original values, including sensitive values removed
 from the artifact. Protect the directory as you protect the source logs.
+To look up a placeholder's original value, run `sudo aken reveal`; see
+[Redaction](redaction.md#looking-up-original-values).
 The collector does not write the token into any of these files.
 
 | Flag | Meaning |
@@ -259,14 +292,16 @@ Relay expiry does not remove the local copy. Dry runs do not prune it.
 | `2` | usage |
 | `3` | aborted at the review screen (collector only) |
 
-No source flag is a usage error. Running as root, reading zero lines, and
+Missing source flags, an invalid `--relay`, a relative `--allow`, and an unknown
+`--keep-category` are usage errors. Bad flags name the flag and point to
+`aken collect --help` without printing usage. Running as root, reading zero lines, and
 exceeding the artifact size limit are failures or refusals.
 
 ## Relay
 
 `--relay URL` selects the relay base URL. The default is
 `https://relay.aken.dev`. Use HTTPS except for a local relay on loopback,
-where plain HTTP is allowed. Start a local relay with `aken-relay serve`, then use its default address:
+where plain HTTP is allowed. The URL must have no path, query, or user info. Start a local relay with `aken-relay serve`, then use its default address:
 
 ```sh
 sudo aken collect --unit nginx --relay http://127.0.0.1:7788
@@ -274,3 +309,16 @@ sudo aken collect --unit nginx --relay http://127.0.0.1:7788
 
 Use the same `--relay URL` with `aken-mcp join` on your machine. A loopback
 address refers to the machine running each command.
+
+A real run checks the relay before the review screen. A connection failure says
+`cannot reach the relay at <url>: <cause>`. A missing or invalid info endpoint
+says `<url> is not an Aken relay: it has no /v0/info`.
+
+Rate limit and capacity errors show a wait time when the relay provides one.
+They also link to [running your own relay](relay.md). The collector does not
+retry a 429 response. If creation or upload fails after **send**, before any
+chunk is accepted, the error is followed by:
+
+```text
+Nothing was uploaded; run the same command again.
+```

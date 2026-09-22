@@ -324,3 +324,39 @@ func TestGzip(t *testing.T) {
 		t.Fatalf("truncated ReadFile: %v", err)
 	}
 }
+
+func TestCollectFileErrors(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "good.log")
+	if err := os.WriteFile(good, []byte("line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	escape := filepath.Join(dir, "escape.log")
+	if err := os.Symlink(filepath.Join(t.TempDir(), "outside"), escape); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	files := Files{Allowed: []string{dir}, Stderr: &stderr}
+	for _, tt := range []struct{ path, want string }{
+		{filepath.Join(dir, "missing"), "cannot read " + filepath.Join(dir, "missing") + ": no such file or directory"},
+		{dir, "cannot read " + dir + ": not a regular file"},
+		{escape, "refusing " + escape + ": it is a symlink that leaves the allowed directories (" + dir + ")"},
+	} {
+		if _, err := files.ReadFile(tt.path); err == nil || err.Error() != tt.want {
+			t.Fatalf("%s: %v", tt.path, err)
+		}
+	}
+	sources, err := files.Glob(filepath.Join(dir, "*.log"))
+	want := "aken: skipped " + escape + ": it is a symlink that leaves the allowed directories (" + dir + ")\n"
+	if err != nil || len(sources) != 1 || sources[0].Target != good || stderr.String() != want {
+		t.Fatalf("sources %v, err %v, stderr %q", sources, err, stderr.String())
+	}
+	if os.Geteuid() != 0 {
+		if err := os.Chmod(good, 0); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := files.ReadFile(good); err == nil || err.Error() != "cannot read "+good+": permission denied" {
+			t.Fatal(err)
+		}
+	}
+}

@@ -3,12 +3,16 @@ package collect
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/akenhq/aken/protocol"
 )
 
 type Options struct {
@@ -74,6 +78,15 @@ func Prune(runsDir string, olderThan time.Time) error {
 			if err := os.RemoveAll(filepath.Join(runsDir, entry.Name())); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func ValidateKeepCategories(categories []string) error {
+	for _, category := range categories {
+		if !slices.Contains(protocol.RedactionCategories, category) {
+			return fmt.Errorf("unknown redaction category %q; use one of: %s", category, strings.Join(protocol.RedactionCategories, " "))
 		}
 	}
 	return nil

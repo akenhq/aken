@@ -520,6 +520,9 @@ func tail(files source.Files, p preparedJob) ([]string, string, error) {
 }
 func journal(ctx context.Context, p preparedJob) ([]string, string, error) {
 	s, err := readJournal(ctx, p.spec, p.since, p.until)
+	if s != nil && len(s.Lines) == 0 && s.Stderr != "" {
+		return nil, "", fmt.Errorf("journalctl: %s", s.Stderr)
+	}
 	if err != nil {
 		return nil, "", errors.New("cannot read journal")
 	}
@@ -549,6 +552,10 @@ func command(ctx context.Context, name string, args ...string) ([]string, error)
 		return nil, err
 	}
 	cmd := execCommand(ctx, path, args...) //nolint:gosec // fixed binary paths and catalog argv; unit names are validated
+	var stderr source.CommandStderr
+	if name == "systemctl" {
+		cmd.Stderr = &stderr
+	}
 	pipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, errors.New("cannot read command output")
@@ -568,6 +575,9 @@ func command(ctx context.Context, name string, args ...string) ([]string, error)
 	}
 	if readErr != nil {
 		return nil, errors.New("cannot read command output")
+	}
+	if len(data) == 0 && stderr.String() != "" {
+		return nil, fmt.Errorf("%s: %s", name, stderr.String())
 	}
 	var exit *exec.ExitError
 	acceptedExit := name == "systemctl" && errors.As(err, &exit) && exit.ExitCode() >= 0 && exit.ExitCode() <= 4

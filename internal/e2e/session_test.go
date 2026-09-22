@@ -18,6 +18,7 @@ import (
 	"time"
 
 	akenmcp "github.com/akenhq/aken/internal/mcp"
+	"github.com/akenhq/aken/internal/screen"
 	"github.com/akenhq/aken/internal/serve"
 	"github.com/akenhq/aken/internal/session"
 	"github.com/akenhq/aken/internal/source"
@@ -44,7 +45,7 @@ func TestLiveSession(t *testing.T) {
 		h.answer(t, "Job j1 from the agent: read_file\n\n  1  read_file   "+h.path+"  lines 1-2\n"+approvalFooter, "a")
 		read := "1: request from <ip#1>\n2: request completed\n"
 		checkLiveResult(t, await(), read, liveMeta("j1", "ok", 2, 1, 0, "3", ""))
-		h.out.until(t, "14:00:00Z  read_file "+h.path+"  2 lines sent, 1 redacted (ip 1 values), 0 flags\n")
+		h.out.until(t, "14:00:00Z  read_file "+h.path+"  2 lines sent, 1 redacted (ip 1 value), 0 flags\n")
 
 		t.Log("3. Deny a three-job plan on one approval screen")
 		await = h.call(t, cs, "plan", map[string]any{"jobs": []map[string]any{
@@ -99,7 +100,7 @@ func TestLiveSession(t *testing.T) {
 		h.answer(t, widening("j5", outside), "o")
 		checkLiveResult(t, await(), "1: request from <ip#1>\n", liveMeta("j5", "ok", 1, 1, 0, "", ""))
 		h.out.until(t, "14:00:00Z  scope    "+outside+" added for this job\n")
-		h.out.until(t, "14:00:00Z  read_file "+outside+"  1 lines sent, 1 redacted (ip 1 values), 0 flags\n")
+		h.out.until(t, "14:00:00Z  read_file "+outside+"  1 lines sent, 1 redacted (ip 1 value), 0 flags\n")
 
 		t.Log("7. The one-job grant is gone, so a neighbour still asks; add the directory instead")
 		await = h.call(t, cs, "read_file", map[string]any{"path": sibling, "from": 1, "to": 1})
@@ -107,13 +108,13 @@ func TestLiveSession(t *testing.T) {
 		h.scope = append(h.scope, outsideDir)
 		checkLiveResult(t, await(), "1: sibling request from <ip#1>\n", liveMeta("j6", "ok", 1, 1, 0, "", ""))
 		h.out.until(t, "14:00:00Z  scope    "+outsideDir+" added for this session\n")
-		h.out.until(t, "14:00:00Z  read_file "+sibling+"  1 lines sent, 1 redacted (ip 1 values), 0 flags\n")
+		h.out.until(t, "14:00:00Z  read_file "+sibling+"  1 lines sent, 1 redacted (ip 1 value), 0 flags\n")
 
 		t.Log("8. The session scope now covers the directory, so the first path asks nothing")
 		await = h.call(t, cs, "read_file", map[string]any{"path": outside, "from": 1, "to": 1})
 		h.answer(t, "Job j7 from the agent: read_file\n\n  1  read_file   "+outside+"  lines 1-1\n"+approvalFooter, "a")
 		checkLiveResult(t, await(), "1: request from <ip#1>\n", liveMeta("j7", "ok", 1, 1, 0, "", ""))
-		h.out.until(t, "14:00:00Z  read_file "+outside+"  1 lines sent, 1 redacted (ip 1 values), 0 flags\n")
+		h.out.until(t, "14:00:00Z  read_file "+outside+"  1 lines sent, 1 redacted (ip 1 value), 0 flags\n")
 
 		t.Log("9. Approve tail_file, inspect the flagged string, and drop the result")
 		await = h.call(t, cs, "tail_file", map[string]any{"path": h.flagPath, "n": 1})
@@ -138,7 +139,7 @@ func TestLiveSession(t *testing.T) {
 			pages = append(pages, fmt.Sprintf("%s:%d: request from <ip#1>\n", h.path, line))
 			checkLiveResult(t, got, pages[i], liveMeta(fmt.Sprintf("j%d", i+9), "ok", 1, 1, 0, next, ""))
 			cursor = next
-			h.out.until(t, "14:00:00Z  search "+h.path+"  1 lines sent, 1 redacted (ip 1 values), 0 flags\n")
+			h.out.until(t, "14:00:00Z  search "+h.path+"  1 lines sent, 1 redacted (ip 1 value), 0 flags\n")
 		}
 		stored, err := session.Load(h.sessionPath)
 		if err != nil || stored.NextJobSeq != 11 || stored.NextResultSeq != 13 {
@@ -169,7 +170,7 @@ func TestLiveSession(t *testing.T) {
 		checkLiveResult(t, h.call(t, cs, "read_file", map[string]any{"path": h.path})(), read, liveMeta("j1", "ok", 3, 2, 0, "", ""))
 		flagged := "2: " + flaggedValue + "\n"
 		checkLiveResult(t, h.call(t, cs, "tail_file", map[string]any{"path": h.flagPath, "n": 1})(), flagged, liveMeta("j2", "ok", 1, 0, 1, "", ""))
-		h.out.until(t, "14:00:00Z  tail "+h.flagPath+"  1 lines sent, 0 redacted, 1 flags\n")
+		h.out.until(t, "14:00:00Z  tail "+h.flagPath+"  1 lines sent, 0 redacted, 1 flag\n")
 
 		t.Log("13. Reject an outside-scope file: level 0 has no screen to widen the scope on")
 		outside := filepath.Join(t.TempDir(), "outside.log")
@@ -236,7 +237,7 @@ func TestModifiedMCP(t *testing.T) {
 		if !reflect.DeepEqual(r.Lines, []string{"1: request from <ip#1>", "2: request completed", "3: request from <ip#1>"}) {
 			t.Fatalf("original result = %v", r.Lines)
 		}
-		h.out.until(t, "14:00:00Z  read_file "+h.path+"  3 lines sent, 2 redacted (ip 1 values), 0 flags\n")
+		h.out.until(t, "14:00:00Z  read_file "+h.path+"  3 lines sent, 2 redacted (ip 1 value), 0 flags\n")
 		before := h.out.text.Len()
 		h.post(t, e, "")
 		// A later result proves the collector has passed the replay in the ordered queue.
@@ -368,7 +369,7 @@ func newLiveSession(t *testing.T, level int) *liveSession {
 	h.out, h.errs = out, errs
 	go func() {
 		defer close(h.done)
-		h.code = serve.Run(ctx, h.options, in, stdout, stderr, 40)
+		h.code = serve.Run(ctx, h.options, screen.NewInput(in, -1, true), stdout, stderr, 40)
 		_ = stdout.Close()
 		_ = stderr.Close()
 	}()
@@ -579,8 +580,8 @@ func (h *liveSession) end(t *testing.T, summary, diagnostics string) {
 	}
 	// The reader goroutines append lines after Run returns; wait for the last line of each stream.
 	h.out.until(t, "Session ended: "+summary+". Local copy: "+h.auditPath+"\n")
-	h.errs.until(t, "aken: the session was ended on the relay\n")
-	if h.code != 1 || h.errs.text.String() != diagnostics+"aken: the session was ended on the relay\n" {
+	h.errs.until(t, "aken: the session was ended on the relay: aken-mcp end ran on your machine, or the relay lost the session\n")
+	if h.code != 1 || h.errs.text.String() != diagnostics+"aken: the session was ended on the relay: aken-mcp end ran on your machine, or the relay lost the session\n" {
 		t.Fatalf("collector exit=%d, stderr=%q", h.code, h.errs.text.String())
 	}
 	if !strings.HasSuffix(h.out.text.String(), "Session ended: "+summary+". Local copy: "+h.auditPath+"\n") {

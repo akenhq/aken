@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/akenhq/aken/internal/collect"
 	"github.com/akenhq/aken/protocol"
 )
 
@@ -35,6 +36,9 @@ func validate(o Options) error {
 		if !filepath.IsAbs(dir) {
 			return errors.New("--allow directory must be absolute")
 		}
+	}
+	if err := collect.ValidateKeepCategories(o.KeepCategories); err != nil {
+		return err
 	}
 	_, err := protocol.NewRelayClient(o.RelayURL, [32]byte{})
 	return err
