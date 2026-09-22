@@ -25,24 +25,44 @@ type RelayClient struct {
 }
 
 func NewRelayClient(baseURL string, credential [32]byte) (*RelayClient, error) {
+	invalid := fmt.Errorf("invalid relay URL %q: use https://, or http:// only for a loopback address such as http://127.0.0.1:7788, with no path, query or user info", baseURL)
 	u, err := url.Parse(baseURL)
 	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(baseURL, "#") || (u.Path != "" && u.Path != "/") {
-		return nil, errors.New("protocol: invalid relay URL")
+		return nil, invalid
 	}
 	loopback := u.Hostname() == "localhost" || net.ParseIP(u.Hostname()).IsLoopback()
 	if u.Scheme != "https" && (u.Scheme != "http" || !loopback) {
-		return nil, errors.New("protocol: invalid relay URL")
+		return nil, invalid
 	}
 	return &RelayClient{BaseURL: strings.TrimSuffix(u.String(), "/"), credential: credential}, nil
 }
 
 type RelayError struct {
-	Status  int
-	Code    string
-	Message string
+	Status     int
+	Code       string
+	Message    string
+	RetryAfter time.Duration
 }
 
 func (e *RelayError) Error() string {
+	if e.Code == "rate_limited" || e.Code == "over_capacity" {
+		wait := "a moment"
+		if e.RetryAfter > 0 {
+			if e.RetryAfter < 2*time.Minute {
+				wait = fmt.Sprintf("%d seconds", e.RetryAfter/time.Second)
+			} else {
+				wait = fmt.Sprintf("%d minutes", (e.RetryAfter-1)/time.Minute+1)
+			}
+		}
+		reason := "the relay's rate limit for this address was reached"
+		if e.Code == "over_capacity" {
+			reason = "the relay is at capacity"
+		}
+		return reason + "; retry in " + wait + ". To avoid relay limits, run your own relay: https://github.com/akenhq/aken/blob/main/docs/relay.md"
+	}
+	if e.Message == "" {
+		return fmt.Sprintf("relay: %d %s", e.Status, e.Code)
+	}
 	return fmt.Sprintf("relay: %d %s: %s", e.Status, e.Code, e.Message)
 }
 
@@ -71,6 +91,9 @@ func (c *RelayClient) do(ctx context.Context, build func() (*http.Request, error
 			}
 			defer func() { _ = response.Body.Close() }()
 			relayErr := &RelayError{Status: response.StatusCode, Code: "http_" + strconv.Itoa(response.StatusCode)}
+			if seconds, err := strconv.ParseInt(response.Header.Get("Retry-After"), 10, 64); err == nil && seconds > 0 && seconds <= int64((1<<63-1)/time.Second) {
+				relayErr.RetryAfter = time.Duration(seconds) * time.Second
+			}
 			body, readErr := readRelayBody(response.Body, 2<<20)
 			var wire ErrorResponse
 			if readErr == nil && json.Unmarshal(body, &wire) == nil && wire.Error != "" {
@@ -152,10 +175,24 @@ func chunkPath(id SessionID, index uint64) string {
 func (c *RelayClient) Info(ctx context.Context) (Info, error) {
 	var info Info
 	body, err := c.request(ctx, http.MethodGet, "/v0/info", "", nil, 2<<20)
-	if err == nil {
-		err = decodeRelayJSON(body, &info)
+	if IsNotFound(err) {
+		return info, fmt.Errorf("%s is not an Aken relay: it has no /v0/info", c.BaseURL)
 	}
-	return info, err
+	if err != nil {
+		var transport *url.Error
+		if errors.As(err, &transport) {
+			cause := error(transport)
+			for errors.Unwrap(cause) != nil {
+				cause = errors.Unwrap(cause)
+			}
+			return info, fmt.Errorf("cannot reach the relay at %s: %w", c.BaseURL, cause)
+		}
+		return info, err
+	}
+	if decodeRelayJSON(body, &info) != nil || info.ProtocolVersions == nil {
+		return info, fmt.Errorf("%s is not an Aken relay: it has no /v0/info", c.BaseURL)
+	}
+	return info, nil
 }
 
 func decodeRelayJSON(body []byte, value any) error {

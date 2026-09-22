@@ -45,7 +45,7 @@ func TestLiveSession(t *testing.T) {
 		h.answer(t, "Job j1 from the agent: read_file\n\n  1  read_file   "+h.path+"  lines 1-2\n"+approvalFooter, "a")
 		read := "1: request from <ip#1>\n2: request completed\n"
 		checkLiveResult(t, await(), read, liveMeta("j1", "ok", 2, 1, 0, "3", ""))
-		h.out.until(t, "14:00:00Z  read_file "+h.path+"  2 lines sent, 1 redacted (ip 1 values), 0 flags\n")
+		h.out.until(t, "14:00:00Z  read_file "+h.path+"  2 lines sent, 1 redacted (ip 1 value), 0 flags\n")
 
 		t.Log("3. Deny a three-job plan on one approval screen")
 		await = h.call(t, cs, "plan", map[string]any{"jobs": []map[string]any{
@@ -94,7 +94,7 @@ func TestLiveSession(t *testing.T) {
 			pages = append(pages, fmt.Sprintf("%s:%d: request from <ip#1>\n", h.path, line))
 			checkLiveResult(t, got, pages[i], liveMeta(fmt.Sprintf("j%d", i+5), "ok", 1, 1, 0, next, ""))
 			cursor = next
-			h.out.until(t, "14:00:00Z  search "+h.path+"  1 lines sent, 1 redacted (ip 1 values), 0 flags\n")
+			h.out.until(t, "14:00:00Z  search "+h.path+"  1 lines sent, 1 redacted (ip 1 value), 0 flags\n")
 		}
 		stored, err := session.Load(h.sessionPath)
 		if err != nil || stored.NextJobSeq != 7 || stored.NextResultSeq != 9 {
@@ -122,7 +122,7 @@ func TestLiveSession(t *testing.T) {
 		checkLiveResult(t, h.call(t, cs, "read_file", map[string]any{"path": h.path})(), read, liveMeta("j1", "ok", 3, 2, 0, "", ""))
 		flagged := "2: " + flaggedValue + "\n"
 		checkLiveResult(t, h.call(t, cs, "tail_file", map[string]any{"path": h.flagPath, "n": 1})(), flagged, liveMeta("j2", "ok", 1, 0, 1, "", ""))
-		h.out.until(t, "14:00:00Z  tail "+h.flagPath+"  1 lines sent, 0 redacted, 1 flags\n")
+		h.out.until(t, "14:00:00Z  tail "+h.flagPath+"  1 lines sent, 0 redacted, 1 flag\n")
 		results := []string{read, flagged}
 		events := map[string][]string{"j1": {"received", "approved", "sent"}, "j2": {"received", "approved", "sent"}}
 		for _, name := range []string{"df", "ps"} {
@@ -182,7 +182,7 @@ func TestModifiedMCP(t *testing.T) {
 		if !reflect.DeepEqual(r.Lines, []string{"1: request from <ip#1>", "2: request completed", "3: request from <ip#1>"}) {
 			t.Fatalf("original result = %v", r.Lines)
 		}
-		h.out.until(t, "14:00:00Z  read_file "+h.path+"  3 lines sent, 2 redacted (ip 1 values), 0 flags\n")
+		h.out.until(t, "14:00:00Z  read_file "+h.path+"  3 lines sent, 2 redacted (ip 1 value), 0 flags\n")
 		before := h.out.text.Len()
 		h.post(t, e, "")
 		// A later result proves the collector has passed the replay in the ordered queue.
@@ -523,8 +523,8 @@ func (h *liveSession) end(t *testing.T, summary, diagnostics string) {
 	}
 	// The reader goroutines append lines after Run returns; wait for the last line of each stream.
 	h.out.until(t, "Session ended: "+summary+". Local copy: "+h.auditPath+"\n")
-	h.errs.until(t, "aken: the session was ended on the relay\n")
-	if h.code != 1 || h.errs.text.String() != diagnostics+"aken: the session was ended on the relay\n" {
+	h.errs.until(t, "aken: the session was ended on the relay: aken-mcp end ran on your machine, or the relay lost the session\n")
+	if h.code != 1 || h.errs.text.String() != diagnostics+"aken: the session was ended on the relay: aken-mcp end ran on your machine, or the relay lost the session\n" {
 		t.Fatalf("collector exit=%d, stderr=%q", h.code, h.errs.text.String())
 	}
 	if !strings.HasSuffix(h.out.text.String(), "Session ended: "+summary+". Local copy: "+h.auditPath+"\n") {

@@ -130,7 +130,7 @@ func Run(ctx context.Context, o Options, stdin *screen.Input, stdout, stderr io.
 		if errors.Is(lifetime.Err(), context.DeadlineExceeded) || (relayEnded && !o.Now().Before(remote.ExpiresAt)) {
 			err = fmt.Errorf("the session expired at %s", remote.ExpiresAt.UTC().Format(time.RFC3339))
 		} else if relayEnded {
-			err = errors.New("the session was ended on the relay")
+			err = errors.New("the session was ended on the relay: aken-mcp end ran on your machine, or the relay lost the session")
 		}
 		code = fail(err)
 	}
@@ -409,13 +409,13 @@ func (s *session) summary(p preparedJob, r protocol.Result) {
 	}
 	slices.Sort(categories)
 	for _, c := range categories {
-		counts = append(counts, fmt.Sprintf("%s %d values", c, r.Redaction.ByCategory[c].Values))
+		counts = append(counts, fmt.Sprintf("%s %d %s", c, r.Redaction.ByCategory[c].Values, screen.Plural(r.Redaction.ByCategory[c].Values, "value", "values")))
 	}
 	_, _ = fmt.Fprintf(s.stdout, "%d lines sent, %d redacted", len(r.Lines), r.Redaction.LinesRedacted)
 	if len(counts) > 0 {
 		_, _ = fmt.Fprintf(s.stdout, " (%s)", strings.Join(counts, ", "))
 	}
-	_, _ = fmt.Fprintf(s.stdout, ", %d flags\n", r.Redaction.Flags)
+	_, _ = fmt.Fprintf(s.stdout, ", %d %s\n", r.Redaction.Flags, screen.Plural(r.Redaction.Flags, "flag", "flags"))
 }
 func capResult(r *protocol.Result, p preparedJob) {
 	size := 0

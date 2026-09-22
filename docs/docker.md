@@ -85,10 +85,17 @@ sudo -u aken journalctl --no-pager -q -F CONTAINER_NAME
 If the journal knows no containers, the error gives a setup hint:
 
 ```text
-no container logs in the journal; is the docker logging driver journald? See docs/docker.md
+no container logs in the journal; is the docker logging driver journald? See https://github.com/akenhq/aken/blob/main/docs/docker.md
 ```
 
 Configure the journald driver as described above and recreate the containers.
+
+If a selected journal source returns no lines, collect names the user running
+the collector in its permissions hint. If journalctl writes a diagnostic, the
+hint includes `; journalctl said: <line>`. In a live session, a `docker_logs`
+job with empty stdout and a stderr diagnostic returns status `error`, for
+example `journalctl: No journal files were found.`. Both messages use the
+first non-empty stderr line, up to 200 bytes.
 
 See [Collect logs](collect.md) for time windows and the review screen.
 

@@ -27,6 +27,7 @@ type Source struct {
 	Name         string
 	Lines        [][]byte
 	Since, Until time.Time
+	Stderr       string
 	Note         string
 }
 
@@ -62,7 +63,7 @@ func ReadFiles(f Files, paths, patterns []string) ([]*Source, error) {
 	for _, path := range paths {
 		s, err := f.readFile(path, seen)
 		if err != nil {
-			return nil, err
+			return nil, f.fileError(path, err)
 		}
 		if s != nil {
 			sources = append(sources, s)
@@ -77,3 +78,28 @@ func ReadFiles(f Files, paths, patterns []string) ([]*Source, error) {
 	}
 	return sources, nil
 }
+
+type CommandStderr struct {
+	line []byte
+	done bool
+}
+
+func (s *CommandStderr) Write(p []byte) (int, error) {
+	for _, b := range p {
+		if s.done {
+			break
+		}
+		if b == '\n' {
+			if len(bytes.TrimSpace(s.line)) > 0 {
+				s.done = true
+			} else {
+				s.line = s.line[:0]
+			}
+		} else if len(s.line) < 200 {
+			s.line = append(s.line, b)
+		}
+	}
+	return len(p), nil
+}
+
+func (s *CommandStderr) String() string { return strings.TrimSpace(string(s.line)) }

@@ -37,6 +37,8 @@ func TestJournalHelper(t *testing.T) {
 			_, _ = os.Stdout.WriteString(args[i+2])
 		case "lines":
 			_, _ = os.Stdout.Write([]byte("one\ntwo\xff\n"))
+		case "warning":
+			_, _ = os.Stderr.WriteString("\n  \n" + strings.Repeat("x", 210) + "\nnot shown\n")
 		case "error":
 			_, _ = os.Stderr.WriteString("permission denied\nnot shown\n")
 			os.Exit(1)
@@ -55,7 +57,7 @@ func TestReadJournal(t *testing.T) {
 		wantLines  int
 		wantError  string
 	}{
-		{"unit", "lines", KindUnit, 2, ""}, {"container", "lines", KindContainer, 2, ""}, {"empty", "empty", KindUnit, 0, ""}, {"failure", "error", KindUnit, 0, "permission denied"},
+		{"unit", "lines", KindUnit, 2, ""}, {"container", "lines", KindContainer, 2, ""}, {"empty", "empty", KindUnit, 0, ""}, {"warning", "warning", KindUnit, 0, ""}, {"failure", "error", KindUnit, 0, "permission denied"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			execCommand = func(ctx context.Context, path string, args ...string) *exec.Cmd {
@@ -81,6 +83,9 @@ func TestReadJournal(t *testing.T) {
 			}
 			if len(s.Lines) != tt.wantLines || s.Name != string(tt.kind)+":api" || !s.Since.Equal(since) {
 				t.Fatalf("source = %+v", s)
+			}
+			if tt.mode == "warning" && s.Stderr != strings.Repeat("x", 200) {
+				t.Fatalf("stderr = %q", s.Stderr)
 			}
 			if tt.wantLines > 0 && string(s.Lines[1]) != "two\xff" {
 				t.Fatal("bytes changed")
@@ -112,7 +117,7 @@ func TestResolveContainers(t *testing.T) {
 		{"ghijkl123456", "ghijkl123456\n", "names", []string{"ghijkl123456"}, ""},
 		{"api", " c \n a\nb\n", "names", nil, `no container named "api" in the journal; known names: a, b, c`},
 		{"api", strings.Join(many, "\n"), "names", nil, `no container named "api" in the journal; known names: ` + strings.Join(many[:20], ", ")},
-		{"api", " \n\n", "names", nil, "no container logs in the journal; is the docker logging driver journald? See docs/docker.md"},
+		{"api", " \n\n", "names", nil, "no container logs in the journal; is the docker logging driver journald? See https://github.com/akenhq/aken/blob/main/docs/docker.md"},
 		{"api", "", "error", nil, "permission denied"},
 		{"-bad", "", "", nil, "invalid container name"},
 	} {
