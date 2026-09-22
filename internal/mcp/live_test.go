@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,7 +23,12 @@ import (
 
 func liveFixture(t *testing.T) (*Server, *protocol.RelayClient, protocol.SessionKeys, protocol.SessionID) {
 	t.Helper()
-	server := httptest.NewServer(relay.NewHandler(relay.NewMemoryStore(), relay.Options{}))
+	return liveFixtureWith(t, func(h http.Handler) http.Handler { return h })
+}
+
+func liveFixtureWith(t *testing.T, wrap func(http.Handler) http.Handler) (*Server, *protocol.RelayClient, protocol.SessionKeys, protocol.SessionID) {
+	t.Helper()
+	server := httptest.NewServer(wrap(relay.NewHandler(relay.NewMemoryStore(), relay.Options{})))
 	t.Cleanup(server.Close)
 	token := protocol.NewToken()
 	client, err := protocol.NewRelayClient(server.URL, token.RelayCredential())
@@ -337,6 +343,37 @@ func TestMalformedAndForgedResults(t *testing.T) {
 				t.Fatalf("malformed result not cached as error: %v", err)
 			}
 		})
+	}
+}
+
+func TestDeadlineLeavesNoPollWaiting(t *testing.T) {
+	// A poll still waiting on the relay after its call gave up can take the next
+	// result, which the relay delivers once, and so lose it.
+	var polls atomic.Int32
+	s, _, _, _ := liveFixtureWith(t, func(h http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/results") {
+				polls.Add(1)
+				defer polls.Add(-1)
+			}
+			h.ServeHTTP(w, r)
+		})
+	})
+	stored, err := session.Load(s.SessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored.NextJobSeq = 2
+	if err := session.Save(s.SessionPath, stored); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 1500*time.Millisecond)
+	defer cancel()
+	if _, _, err := s.jobResult(ctx, nil, resultArgs{ID: "j1"}); err == nil || err.Error() != pending("j1").Error() {
+		t.Fatalf("result: %v", err)
+	}
+	if n := polls.Load(); n != 0 {
+		t.Fatalf("%d result polls still waiting on the relay", n)
 	}
 }
 
