@@ -30,6 +30,7 @@ Usage:
 Commands:
   collect   Collect logs, redact them here, review, and upload one encrypted artifact
   serve     Open a live session and run approved catalog jobs
+  reveal    Print the original values behind placeholders, from local copies
   version   Print the version
   help      Print this help
 
@@ -97,6 +98,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runServe(args, stdout, stderr)
 	case "collect":
 		return runCollect(args, stdout, stderr)
+	case "reveal":
+		return runReveal(args, stdout, stderr)
 	default:
 		_, _ = fmt.Fprintf(stderr, "aken: unknown command %q\nRun \"aken help\" for usage.\n", args[0])
 		return 2
