@@ -182,6 +182,10 @@ least 20 characters, contains a letter and a digit, and has Shannon entropy
 of at least 3.5 bits per character. Placeholders and kept values are excluded.
 Flags count distinct strings and include source and line numbers.
 
+Hex ids and UUIDs are ID-shaped flags. A `name=value` string whose value is
+a hex id or UUID also counts as a hex id when the name matches
+`^[A-Za-z_][A-Za-z0-9_-]*$`, such as `req=9a1d7f1706cae1fc`.
+
 Choose **view flagged lines** before sending. If a value is sensitive, abort,
 add a rule, and run again. A flag does not redact the value. An absence of
 flags does not establish that the artifact is free of sensitive data.

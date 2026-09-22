@@ -97,7 +97,7 @@ func Run(ctx context.Context, cfg Config, stdout, stderr io.Writer) error {
 	}()
 	defer func() { cancelSweep(); <-sweepDone }()
 	stopped := make(chan error, 1)
-	_, _ = fmt.Fprintf(stdout, "aken-relay listening on http://%s (store %s)\n", listener.Addr(), cfg.Store)
+	_, _ = fmt.Fprintf(stdout, "aken-relay listening on http://%s (store %s). Clients pass --relay http://%s; health check: http://%s/healthz\n", listener.Addr(), cfg.Store, listener.Addr(), listener.Addr())
 	go func() { stopped <- server.Serve(listener) }()
 	select {
 	case err := <-stopped:

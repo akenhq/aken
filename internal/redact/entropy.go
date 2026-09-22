@@ -4,10 +4,12 @@ package redact
 import (
 	"math"
 	"regexp"
+	"strings"
 )
 
 var entropyRun = regexp.MustCompile(`[A-Za-z0-9+/=_-]{20,}`)
 var idShape = regexp.MustCompile(`^(?:[0-9a-f]{16,64}|[0-9A-F]{16,64}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$`)
+var idName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]*$`)
 
 type Flag struct {
 	Line     int
@@ -29,7 +31,9 @@ func flags(line []byte, keep map[string]bool) []Flag {
 			digit = digit || c >= '0' && c <= '9'
 		}
 		if letter && digit && entropy(value) >= 3.5 {
-			out = append(out, Flag{Value: s, IDShaped: idShape.MatchString(s)})
+			name, value, assignment := strings.Cut(s, "=")
+			id := idShape.MatchString(s) || assignment && idName.MatchString(name) && idShape.MatchString(value)
+			out = append(out, Flag{Value: s, IDShaped: id})
 			seen[s] = true
 		}
 	}
