@@ -16,8 +16,8 @@ content. You can request credit in the release notes. There is no bounty.
 ## Scope
 
 This repository is in scope: the collector, local MCP, protocol package, dev
-relay, redaction rules, and spec. The hosted relay, once it exists, is in scope;
-you report it through the same channels.
+relay, redaction rules, and spec. The hosted relay at relay.aken.dev is in scope;
+report it through the same channels.
 
 ## Supported versions
 
@@ -30,4 +30,4 @@ reviews and findings through the reporting channels above.
 
 ## Verifying releases
 
-You can follow [Install and verify](docs/install.md) to verify a release before installing it.
+You can follow [Verify a release](docs/verify.md) to verify a release before installing it.
