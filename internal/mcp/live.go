@@ -170,9 +170,11 @@ func pending(id string) error {
 }
 
 func (s *Server) await(ctx context.Context, keys protocol.SessionKeys, client *protocol.RelayClient, stored *session.Session, ids []string, deadline time.Time) error {
-	ctx, cancel := context.WithDeadline(ctx, deadline)
-	defer cancel()
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
 	id, _ := protocol.ParseSessionID(stored.SessionID)
+	last := false
 	for {
 		missing := ""
 		for _, jobID := range ids {
@@ -184,10 +186,16 @@ func (s *Server) await(ctx context.Context, keys protocol.SessionKeys, client *p
 		if missing == "" {
 			return nil
 		}
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		remaining := time.Until(deadline)
+		if last || remaining <= 0 {
 			return pending(missing)
 		}
-		envelopes, err := client.PollResults(ctx, id, 30*time.Second)
+		// The relay delivers a result once. A poll canceled mid-wait can still
+		// receive one the relay then loses, so the relay's wait ends the poll
+		// before the deadline instead of a cancellation.
+		wait := min(30*time.Second, remaining.Truncate(time.Second))
+		last = wait == 0
+		envelopes, err := client.PollResults(ctx, id, wait)
 		if err != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				return pending(missing)
