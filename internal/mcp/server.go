@@ -11,6 +11,7 @@ import (
 	"github.com/akenhq/aken/internal/artifact"
 	"github.com/akenhq/aken/internal/session"
 	"github.com/akenhq/aken/protocol"
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -31,8 +32,22 @@ type Server struct {
 }
 
 func (s *Server) MCP() *mcp.Server {
+	current := "No session is joined yet: ask the human to run aken-mcp join on their machine."
+	if stored, err := session.Load(s.SessionPath); err == nil {
+		mode, tools := "one-shot artifact", "summary, sources, search, tail, read and context"
+		if stored.Live() {
+			mode, tools = "live session", "list_dir, read_file, search_files, tail_file, journal, docker_logs, systemctl_status, ps, df and plan"
+		}
+		current = fmt.Sprintf("Current session: %s %s, expires %s. Use %s.", mode, stored.SessionID, stored.ExpiresAt.UTC().Format(time.RFC3339), tools)
+	}
+	planSchema, err := jsonschema.For[planArgs](nil)
+	if err != nil {
+		panic(err)
+	}
+	planSchema.Properties["jobs"].Type = "array"
+	planSchema.Properties["jobs"].Types = nil
 	srv := mcp.NewServer(&mcp.Implementation{Name: "aken-mcp", Version: s.Version}, &mcp.ServerOptions{
-		Instructions: instructions,
+		Instructions: current + "\n" + instructions,
 		Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}},
 	})
 	mcp.AddTool(srv, &mcp.Tool{Name: "sources", Description: "List the sources in the artifact with their line counts and time windows.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, s.sources)
@@ -50,7 +65,7 @@ func (s *Server) MCP() *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{Name: "systemctl_status", Description: "Read a systemd service status.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, s.systemctlStatus)
 	mcp.AddTool(srv, &mcp.Tool{Name: "ps", Description: "List server processes.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, s.ps)
 	mcp.AddTool(srv, &mcp.Tool{Name: "df", Description: "Show server filesystem usage.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, s.df)
-	mcp.AddTool(srv, &mcp.Tool{Name: "plan", Description: "Submit 1 to 40 catalog jobs for approval together. Use catalog names search and tail in jobs.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, s.plan)
+	mcp.AddTool(srv, &mcp.Tool{Name: "plan", Description: "Submit 1 to 40 catalog jobs for approval together. Use search or search_files and tail or tail_file in jobs.", InputSchema: planSchema, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, s.plan)
 	mcp.AddTool(srv, &mcp.Tool{Name: "result", Description: "Wait for a job whose earlier call timed out.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, s.jobResult)
 	if s.AllowChatJoin {
 		mcp.AddTool(srv, &mcp.Tool{Name: "join", Description: "Store a session token so the tools can read its artifact on the relay this server was started with. The token then sits in this transcript; prefer aken-mcp join in a terminal."}, s.join)

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,47 +25,47 @@ type listDirArgs struct {
 	Path string `json:"path" jsonschema:"absolute directory path inside the session scope"`
 }
 type readFileArgs struct {
-	Path string `json:"path"`
+	Path string `json:"path" jsonschema:"absolute file path inside the session scope"`
 	From int    `json:"from,omitempty" jsonschema:"first line, default 1"`
 	To   int    `json:"to,omitempty" jsonschema:"last line, default from+499; at most 500 lines per result"`
 }
 type searchFilesArgs struct {
 	Glob   string `json:"glob" jsonschema:"absolute glob inside the session scope"`
 	Regex  string `json:"regex" jsonschema:"RE2 regular expression"`
-	Since  string `json:"since,omitempty"`
+	Since  string `json:"since,omitempty" jsonschema:"only search files modified since this duration or RFC 3339 time"`
 	Before int    `json:"before,omitempty" jsonschema:"context lines before, 0 to 50"`
 	After  int    `json:"after,omitempty" jsonschema:"context lines after, 0 to 50"`
 	Max    int    `json:"max,omitempty" jsonschema:"matches per result, 1 to 200, default 50"`
 	Cursor string `json:"cursor,omitempty" jsonschema:"next cursor from the previous result"`
 }
 type tailFileArgs struct {
-	Path string `json:"path"`
+	Path string `json:"path" jsonschema:"absolute file path inside the session scope"`
 	N    int    `json:"n,omitempty" jsonschema:"lines to return, 1 to 500, default 100"`
 }
 type journalArgs struct {
-	Unit   string `json:"unit"`
+	Unit   string `json:"unit" jsonschema:"systemd service unit name"`
 	Since  string `json:"since,omitempty" jsonschema:"start of window, default 1h"`
 	Until  string `json:"until,omitempty" jsonschema:"end of window, default now"`
 	Regex  string `json:"regex,omitempty" jsonschema:"RE2 regular expression"`
 	Tail   int    `json:"tail,omitempty" jsonschema:"last 1 to 500 lines; excludes regex, max and cursor"`
 	Max    int    `json:"max,omitempty" jsonschema:"lines per result, 1 to 500, default 200"`
-	Cursor string `json:"cursor,omitempty"`
+	Cursor string `json:"cursor,omitempty" jsonschema:"next cursor from the previous result"`
 }
 type dockerLogsArgs struct {
-	Container string `json:"container"`
+	Container string `json:"container" jsonschema:"docker container name or ID"`
 	Since     string `json:"since,omitempty" jsonschema:"start of window, default 1h"`
 	Until     string `json:"until,omitempty" jsonschema:"end of window, default now"`
 	Regex     string `json:"regex,omitempty" jsonschema:"RE2 regular expression"`
 	Tail      int    `json:"tail,omitempty" jsonschema:"last 1 to 500 lines; excludes regex, max and cursor"`
 	Max       int    `json:"max,omitempty" jsonschema:"lines per result, 1 to 500, default 200"`
-	Cursor    string `json:"cursor,omitempty"`
+	Cursor    string `json:"cursor,omitempty" jsonschema:"next cursor from the previous result"`
 }
 type systemctlStatusArgs struct {
-	Unit string `json:"unit"`
+	Unit string `json:"unit" jsonschema:"systemd service unit name"`
 }
 type planJob struct {
-	Name   string         `json:"name" jsonschema:"catalog name; search and tail are the catalog names for search_files and tail_file"`
-	Params map[string]any `json:"params"`
+	Name   string         `json:"name" jsonschema:"catalog name, accepting search_files for search and tail_file for tail"`
+	Params map[string]any `json:"params" jsonschema:"parameters for this catalog job"`
 }
 type planArgs struct {
 	Jobs []planJob `json:"jobs" jsonschema:"1 to 40 catalog jobs, in order; no nested plans"`
@@ -256,8 +257,14 @@ func (s *Server) plan(ctx context.Context, _ *mcp.CallToolRequest, in planArgs) 
 	params := protocol.PlanParams{}
 	var ids []string
 	for i, entry := range in.Jobs {
+		switch entry.Name {
+		case "tail_file":
+			entry.Name = "tail"
+		case "search_files":
+			entry.Name = "search"
+		}
 		if _, ok := protocol.CatalogClass(entry.Name); !ok {
-			return nil, nil, errors.New("jobs: unknown catalog name")
+			return nil, nil, fmt.Errorf("jobs[%d]: unknown catalog name %q; use list_dir, read_file, search, tail, journal, docker_logs, systemctl_status, ps or df", i, entry.Name)
 		}
 		if entry.Params == nil {
 			return nil, nil, errors.New("jobs: params must be an object")
@@ -304,6 +311,11 @@ func (s *Server) jobResult(ctx context.Context, _ *mcp.CallToolRequest, in resul
 	}
 	if !protocol.ValidateJobID(in.ID) {
 		return nil, nil, errors.New("id: invalid job id")
+	}
+	seqText, _, _ := strings.Cut(strings.TrimPrefix(in.ID, "j"), ".")
+	seq, err := strconv.ParseUint(seqText, 10, 64)
+	if err != nil || !strings.HasPrefix(in.ID, "j") || seq == 0 || seq >= stored.NextJobSeq {
+		return nil, nil, fmt.Errorf("unknown job id %s: ids come from earlier tool calls in this session", in.ID)
 	}
 	if err := s.await(ctx, keys, client, &stored, []string{in.ID}, time.Now().Add(resultWait)); err != nil {
 		return nil, nil, err

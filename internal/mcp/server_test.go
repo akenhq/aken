@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -68,7 +70,7 @@ func TestServer(t *testing.T) {
 		s := &Server{SessionPath: filepath.Join(t.TempDir(), "session.json"), AllowChatJoin: allow, Version: "test"}
 		cs := connect(t, s)
 		initialized := cs.InitializeResult()
-		if initialized.Instructions != instructions || initialized.ServerInfo.Name != "aken-mcp" || initialized.ServerInfo.Version != "test" {
+		if initialized.Instructions != "No session is joined yet: ask the human to run aken-mcp join on their machine.\n"+instructions || initialized.ServerInfo.Name != "aken-mcp" || initialized.ServerInfo.Version != "test" {
 			t.Fatalf("initialize = %+v", initialized)
 		}
 		caps, err := json.Marshal(initialized.Capabilities)
@@ -94,6 +96,23 @@ func TestServer(t *testing.T) {
 			}
 			if err != nil || !strings.Contains(string(schema), `"additionalProperties":false`) {
 				t.Fatalf("schema = %s, %v", schema, err)
+			}
+			var input struct {
+				Properties map[string]struct {
+					Description string
+					Type        any
+				}
+			}
+			if err := json.Unmarshal(schema, &input); err != nil {
+				t.Fatal(err)
+			}
+			for name, property := range input.Properties {
+				if property.Description == "" {
+					t.Errorf("%s.%s has no description", tool.Name, name)
+				}
+				if tool.Name == "plan" && name == "jobs" && property.Type != "array" {
+					t.Errorf("plan.jobs type = %v", property.Type)
+				}
 			}
 		}
 		want := []string{"context", "read", "search", "sources", "summary", "tail", "list_dir", "read_file", "search_files", "tail_file", "journal", "docker_logs", "systemctl_status", "ps", "df", "plan", "result"}
@@ -176,5 +195,30 @@ func TestLoadCacheAndJoin(t *testing.T) {
 	got, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "sources", Arguments: map[string]any{}})
 	if err != nil || !got.IsError || !strings.Contains(got.Content[0].(*mcp.TextContent).Text, "artifact not found") {
 		t.Fatalf("missing manifest = %+v, %v", got, err)
+	}
+}
+
+func TestSessionInstructions(t *testing.T) {
+	blob, stored := fixture(t, "line\n")
+	live, _, _, _ := liveFixture(t)
+	liveStored, err := session.Load(live.SessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := &Server{SessionPath: filepath.Join(t.TempDir(), "session.json")}
+	if err := os.WriteFile(broken.SessionPath, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		s    *Server
+		line string
+	}{
+		{blob, fmt.Sprintf("Current session: one-shot artifact %s, expires %s. Use summary, sources, search, tail, read and context.", stored.SessionID, stored.ExpiresAt.UTC().Format(time.RFC3339))},
+		{live, fmt.Sprintf("Current session: live session %s, expires %s. Use list_dir, read_file, search_files, tail_file, journal, docker_logs, systemctl_status, ps, df and plan.", liveStored.SessionID, liveStored.ExpiresAt.UTC().Format(time.RFC3339))},
+		{broken, "No session is joined yet: ask the human to run aken-mcp join on their machine."},
+	} {
+		if got := connect(t, tt.s).InitializeResult().Instructions; got != tt.line+"\n"+instructions {
+			t.Fatalf("instructions = %q", got)
+		}
 	}
 }

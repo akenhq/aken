@@ -29,9 +29,16 @@ Run this on your machine and paste the token from your server at the prompt:
 aken-mcp join
 ```
 
+Run `aken-mcp status` to check the session mode and expiry.
+Run `aken-mcp end` to delete the session on the relay and forget it locally.
+
+On Linux, the session file is `$XDG_CONFIG_HOME/aken/session.json` when
+`XDG_CONFIG_HOME` is set, or `~/.config/aken/session.json` otherwise.
+On macOS, it is `~/Library/Application Support/aken/session.json`.
+
 ## Supported platforms
 
-Linux x64 and arm64, and macOS arm64 (Apple Silicon).
+Linux x64 (amd64) and arm64, and macOS arm64 (Apple Silicon).
 
 ## How this package works
 

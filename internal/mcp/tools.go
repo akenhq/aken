@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/akenhq/aken/internal/artifact"
+	"github.com/akenhq/aken/internal/screen"
 	"github.com/akenhq/aken/internal/session"
 	"github.com/akenhq/aken/protocol"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -28,21 +29,21 @@ type searchArgs struct {
 	Cursor string `json:"cursor,omitempty" jsonschema:"cursor from a previous search result to continue"`
 }
 type tailArgs struct {
-	Source string `json:"source"`
+	Source string `json:"source" jsonschema:"source name from the sources tool"`
 	N      int    `json:"n,omitempty" jsonschema:"lines to return, 1 to 500, default 100"`
 }
 type readArgs struct {
-	Source string `json:"source"`
+	Source string `json:"source" jsonschema:"source name from the sources tool"`
 	From   int    `json:"from" jsonschema:"first line, at least 1"`
 	To     int    `json:"to" jsonschema:"last line, at least from"`
 }
 type contextArgs struct {
-	Source string `json:"source"`
+	Source string `json:"source" jsonschema:"source name from the sources tool"`
 	Line   int    `json:"line" jsonschema:"center line, at least 1"`
 	Around int    `json:"around,omitempty" jsonschema:"lines on each side, 0 to 200, default 20"`
 }
 type joinArgs struct {
-	Token string `json:"token"`
+	Token string `json:"token" jsonschema:"session token printed by aken serve or aken collect"`
 }
 
 func result(text string, meta any) (*mcp.CallToolResult, any, error) {
@@ -66,7 +67,14 @@ func (s *Server) sources(ctx context.Context, _ *mcp.CallToolRequest, _ noArgs) 
 	var b strings.Builder
 	for _, source := range a.Sources {
 		m := source.Meta
-		fmt.Fprintf(&b, "%s  %s  %d  %s..%s  %s\n", m.Name, m.Kind, m.Lines, m.Since, m.Until, m.Note)
+		window, note := "-", m.Note
+		if m.Since != "" || m.Until != "" {
+			window = m.Since + ".." + m.Until
+		}
+		if note == "" {
+			note = "-"
+		}
+		fmt.Fprintf(&b, "%s  %s  %d  %s  %s\n", m.Name, m.Kind, m.Lines, window, note)
 	}
 	fmt.Fprintf(&b, "artifact expires %s\n", stored.ExpiresAt.Format(time.RFC3339))
 	return result(b.String(), map[string]any{"sources": len(a.Sources)})
@@ -88,7 +96,7 @@ func (s *Server) summary(ctx context.Context, _ *mcp.CallToolRequest, _ noArgs) 
 	fmt.Fprintf(&b, "created %s\nexpires %s\nsources %d\ntotal lines %d\nlines redacted %d\nby category\n", a.Manifest.CreatedAt.Format(time.RFC3339), stored.ExpiresAt.Format(time.RFC3339), len(a.Sources), total, r.LinesRedacted)
 	for _, category := range protocol.RedactionCategories {
 		count := r.ByCategory[category]
-		fmt.Fprintf(&b, "  %s  %d values  %d lines\n", category, count.Values, count.Lines)
+		fmt.Fprintf(&b, "  %s  %d %s  %d %s\n", category, count.Values, screen.Plural(count.Values, "value", "values"), count.Lines, screen.Plural(count.Lines, "line", "lines"))
 	}
 	fmt.Fprintf(&b, "flags %d\nrules %d\n", r.Flags, r.Rules)
 	return result(b.String(), map[string]any{"lines": total, "lines_redacted": r.LinesRedacted, "flags": r.Flags})
@@ -246,7 +254,7 @@ func (s *Server) join(ctx context.Context, _ *mcp.CallToolRequest, in joinArgs) 
 	}
 	info, err := client.Session(ctx, token.SessionID())
 	if protocol.IsNotFound(err) {
-		return nil, nil, fmt.Errorf("no artifact for this token on %s: it expired, was deleted, or the upload did not finish", client.BaseURL)
+		return nil, nil, fmt.Errorf("no artifact for this token on %s: it expired, was deleted, or the upload did not finish; if the collector used another relay, join with aken-mcp join --relay <URL>", client.BaseURL)
 	}
 	if err != nil {
 		return nil, nil, RelayLimitHint(err)
@@ -286,7 +294,7 @@ func (s *Server) search(ctx context.Context, req *mcp.CallToolRequest, in search
 	}
 	regex, err := regexp.Compile(in.Regex)
 	if err != nil {
-		return nil, nil, fmt.Errorf("regex: invalid RE2 regular expression")
+		return nil, nil, fmt.Errorf("regex: %w", err)
 	}
 	position := struct {
 		SessionID string `json:"sid"`

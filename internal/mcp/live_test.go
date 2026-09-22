@@ -236,16 +236,18 @@ func TestPlanValidation(t *testing.T) {
 	for i := range tooMany {
 		tooMany[i] = map[string]any{"name": "ps", "params": map[string]any{}}
 	}
-	for _, jobs := range []any{
+	for i, jobs := range []any{
 		[]any{}, tooMany,
 		[]any{map[string]any{"name": "ps", "params": map[string]any{}}, map[string]any{"name": "private-name", "params": map[string]any{}}},
 		[]any{map[string]any{"name": "plan", "params": map[string]any{}}},
-		[]any{map[string]any{"name": "search_files", "params": map[string]any{}}},
 		[]any{map[string]any{"name": "ps", "params": nil}},
 	} {
 		got, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "plan", Arguments: map[string]any{"jobs": jobs}})
-		if err != nil || !got.IsError || strings.Contains(got.Content[0].(*mcp.TextContent).Text, "private-name") {
+		if err != nil || !got.IsError {
 			t.Fatalf("plan validation: %+v, %v", got, err)
+		}
+		if i == 2 && got.Content[0].(*mcp.TextContent).Text != "jobs[1]: unknown catalog name \"private-name\"; use list_dir, read_file, search, tail, journal, docker_logs, systemctl_status, ps or df" {
+			t.Fatal(got.Content[0])
 		}
 	}
 	stored, err := session.Load(s.SessionPath)
@@ -297,6 +299,14 @@ func TestMalformedAndForgedResults(t *testing.T) {
 	for _, forged := range []bool{false, true} {
 		t.Run(fmt.Sprint(forged), func(t *testing.T) {
 			s, client, keys, id := liveFixture(t)
+			stored, err := session.Load(s.SessionPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stored.NextJobSeq = 3
+			if err := session.Save(s.SessionPath, stored); err != nil {
+				t.Fatal(err)
+			}
 			if forged {
 				wrong := protocol.DeriveSessionKeys([32]byte{99})
 				postResult(t, client, wrong, id, 1, []byte(`{"id":"j1","status":"ok","lines":["forged"]}`))
@@ -410,5 +420,46 @@ func TestRelayLimitHint(t *testing.T) {
 	other := &protocol.RelayError{Status: 429, Code: "rate_limited"}
 	if RelayLimitHint(other) != other || RelayLimitHint(nil) != nil {
 		t.Fatal("unrelated error changed")
+	}
+}
+
+func TestUnknownResultID(t *testing.T) {
+	s, client, _, id := liveFixture(t)
+	if err := client.DeleteSession(t.Context(), id); err != nil {
+		t.Fatal(err)
+	}
+	cs := connect(t, s)
+	for _, id := range []string{"j1", "j1.1", "j99", "j18446744073709551616", "bogus"} {
+		got, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "result", Arguments: map[string]any{"id": id}})
+		want := "unknown job id " + id + ": ids come from earlier tool calls in this session"
+		if err != nil || !got.IsError || got.Content[0].(*mcp.TextContent).Text != want {
+			t.Fatalf("unissued result: %+v, %v", got, err)
+		}
+	}
+}
+
+func TestPlanAliases(t *testing.T) {
+	s, client, keys, id := liveFixture(t)
+	fakeCollector(t, s, client, keys, id, func(job protocol.Job) []protocol.Result {
+		var plan protocol.PlanParams
+		if err := json.Unmarshal(job.Params, &plan); err != nil {
+			t.Error(err)
+			return nil
+		}
+		if len(plan.Jobs) != 2 || plan.Jobs[0].Name != "tail" || plan.Jobs[1].Name != "search" {
+			t.Error("aliases not mapped")
+		}
+		var results []protocol.Result
+		for _, job := range plan.Jobs {
+			results = append(results, protocol.Result{ID: job.ID, Status: "ok"})
+		}
+		return results
+	})
+	got, err := connect(t, s).CallTool(t.Context(), &mcp.CallToolParams{Name: "plan", Arguments: map[string]any{"jobs": []any{
+		map[string]any{"name": "tail_file", "params": map[string]any{"path": "/var/log/app"}},
+		map[string]any{"name": "search_files", "params": map[string]any{"glob": "/var/log/*", "regex": "error"}},
+	}}})
+	if err != nil || got.IsError || len(got.Content) != 4 {
+		t.Fatalf("plan aliases: %+v, %v", got, err)
 	}
 }
