@@ -496,6 +496,28 @@ func TestPersistentPollLifecycle(t *testing.T) {
 	}
 }
 
+func TestCanceledPollKeepsMessages(t *testing.T) {
+	s := NewHandler(NewMemoryStore(), Options{})
+	id, path, auth := sessionFixture(t, s)
+	request(t, s, "POST", path+"/join", joinBody(), "1", auth, 201, "")
+	body, err := json.Marshal(protocol.Envelope{Version: 1, SessionID: id.String(), Seq: 1, Class: 1, Payload: make([]byte, 17)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request(t, s, "POST", path+"/results", body, "1", auth, 202, "")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	r := httptest.NewRequest("GET", path+"/results?wait=0", nil).WithContext(ctx)
+	r.Header.Set(protocol.ProtocolHeader, "1")
+	r.Header.Set("Authorization", auth)
+	s.ServeHTTP(httptest.NewRecorder(), r)
+	w := request(t, s, "GET", path+"/results?wait=0", nil, "1", auth, 200, "")
+	var got protocol.Messages
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || len(got.Messages) != 1 {
+		t.Fatalf("message lost to a canceled poll: %v, %s", err, w.Body.String())
+	}
+}
+
 func TestPersistentConcurrentDelivery(t *testing.T) {
 	s := NewHandler(NewMemoryStore(), Options{})
 	id, path, auth := sessionFixture(t, s)

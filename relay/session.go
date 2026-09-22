@@ -101,6 +101,10 @@ func (s *Handler) poll(w http.ResponseWriter, r *http.Request, id protocol.Sessi
 	defer expiry.Stop()
 	timedOut := false
 	for {
+		// Delivery is at most once, so a poll whose client has gone must not take messages.
+		if r.Context().Err() != nil {
+			return
+		}
 		live.mu.Lock()
 		if live.gone {
 			live.mu.Unlock()
