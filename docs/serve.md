@@ -19,7 +19,12 @@ Start the collector with `sudo`. The installed `aken` command is a launcher
 that switches to the unprivileged `aken` user before the collector starts;
 the collector itself refuses root. Follow [Install and verify](install.md)
 to give that user membership in `adm` and `systemd-journal` where those
-groups exist.
+groups exist. From a source build, run the collector as any unprivileged user.
+Help works as root. A real run as root exits 1 with:
+
+```text
+aken: refusing to run as root. The installed aken command switches to the aken user for you: run sudo aken serve. From a source build, run it as any unprivileged user.
+```
 
 File jobs must stay under `/var/log` or a directory you add with `--allow DIR`.
 You can repeat `--allow`. The collector resolves canonical paths through
@@ -185,6 +190,12 @@ Denied and rejected results have a summary with the reason, for example:
 14:02:09Z  tail /var/log/app/app.log  error: cannot read file: permission denied for the user running aken serve
 ```
 
+When `journal`, `docker_logs`, or `systemctl_status` returns no stdout but
+writes a diagnostic to stderr, the result has status `error`. Its error is
+`<command name>: <line>`, using the first non-empty stderr line, up to 200 bytes.
+For example: `journalctl: No journal files were found.`. If stdout and stderr
+are both empty and the command succeeds, the result stays `ok` with zero lines.
+
 Errors give the cause, such as a missing file, a permission problem, or a
 non-regular file. They do not repeat the path or any file content.
 
@@ -274,7 +285,13 @@ the collector as a keystroke rather than as a signal. It ends the session the
 same way, after printing `Ctrl-C: ending the session.`.
 
 The collector also ends on expiry or a relay 404 or 409, including when the
-MCP ends the session or the relay loses it. It deletes the relay session,
+MCP ends the session or the relay loses it. A relay 404 prints:
+
+```text
+aken: the session was ended on the relay: aken-mcp end ran on your machine, or the relay lost the session
+```
+
+The collector exits 1 in either case. It deletes the relay session,
 ignores a deletion 404, writes the mapping, and sets `ended_at` in
 `session.json`. The final line has this form:
 
@@ -290,7 +307,9 @@ Session ended: 12 jobs, 10 sent, 1 denied, 1 rejected. Local copy: <dir>
 | `1` | Failure or refusal, including relay termination or expiry |
 | `2` | Usage error |
 
-Running as root is a refusal. Without a terminal on stdin, serve exits 1 with:
+An invalid `--relay`, a relative `--allow`, and an unknown `--keep-category`
+are usage errors. Bad flags name the flag and point to `aken serve --help`
+without printing usage. Running as root is a refusal. Without a terminal on stdin, serve exits 1 with:
 
 ```text
 aken: serve needs a terminal
@@ -300,6 +319,8 @@ aken: serve needs a terminal
 
 `--relay URL` selects the relay base URL. The default is
 `https://relay.aken.dev`. Use the same URL with `aken-mcp join --relay URL`.
+Use HTTPS, or HTTP only on loopback, such as `http://127.0.0.1:7788`.
+The URL must have no path, query, or user info.
 `--ttl D` sets the session lifetime, default `8h`, maximum `24h`.
 
 If the relay does not advertise live session support, the collector exits 1:
@@ -307,3 +328,10 @@ If the relay does not advertise live session support, the collector exits 1:
 ```text
 aken: relay <url> does not support live sessions
 ```
+
+Connection failures say `cannot reach the relay at <url>: <cause>`.
+A missing or invalid info endpoint says
+`<url> is not an Aken relay: it has no /v0/info`.
+Rate limit and capacity errors show a wait time when the relay provides one
+and link to [running your own relay](relay.md). The collector does not retry
+a 429 response.

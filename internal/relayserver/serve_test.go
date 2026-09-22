@@ -38,7 +38,7 @@ func testRun(t *testing.T, store, dataDir string) {
 		buf := make([]byte, 512)
 		n, err := reader.Read(buf)
 		if err == nil {
-			ready <- strings.Fields(string(buf[:n]))[3]
+			ready <- string(buf[:n])
 		}
 		_, _ = io.Copy(io.Discard, reader)
 	}()
@@ -60,7 +60,16 @@ func testRun(t *testing.T, store, dataDir string) {
 	})
 	var url string
 	select {
-	case url = <-ready:
+	case line := <-ready:
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			t.Fatalf("startup line = %q", line)
+		}
+		url = fields[3]
+		want := "aken-relay listening on " + url + " (store " + store + "). Clients pass --relay " + url + "; health check: " + url + "/healthz\n"
+		if line != want {
+			t.Fatalf("startup line = %q, want %q", line, want)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("startup timed out")
 	}
@@ -133,7 +142,7 @@ func TestLogging(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &entry); err != nil {
 		t.Fatal(err)
 	}
-	if entry["method"] != "PUT" || entry["route"] != "/v0/sessions/{sid}" || entry["session_id"] != sid || entry["status"] != float64(503) || entry["bytes"] != float64(len("{\"error\":\"over_capacity\"}\n")) || entry["client_ip"] != "203.0.113.1" || entry["duration"] == nil {
+	if entry["method"] != "PUT" || entry["route"] != "/v0/sessions/{sid}" || entry["session_id"] != sid || entry["status"] != float64(503) || entry["bytes"] != float64(len("{\"error\":\"over_capacity\",\"message\":\"the relay is at capacity; retry later\"}\n")) || entry["client_ip"] != "203.0.113.1" || entry["duration"] == nil {
 		t.Fatal(entry)
 	}
 	if strings.Contains(out.String(), "secret") || strings.Contains(out.String(), protocol.AuthorizationHeader(token.RelayCredential())) {

@@ -216,6 +216,8 @@ func TestCommandHelper(t *testing.T) {
 	for i, arg := range os.Args {
 		if arg == "--serve-command-helper" {
 			switch os.Args[i+1] {
+			case "stderr":
+				_, _ = os.Stderr.WriteString("\nNo journal files were found.\nnot shown\n")
 			case "bytes":
 				_, _ = os.Stdout.Write([]byte("one\ntwo\xff\n"))
 			case "many":

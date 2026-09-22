@@ -9,6 +9,9 @@ import (
 
 func TestRun(t *testing.T) {
 	t.Setenv("AKEN_R2_ACCOUNT_ID", "")
+	t.Setenv("AKEN_R2_BUCKET", "")
+	t.Setenv("AKEN_R2_ACCESS_KEY_ID", "value")
+	t.Setenv("AKEN_R2_SECRET_ACCESS_KEY", "value")
 	for _, tt := range []struct {
 		name           string
 		args           []string
@@ -16,12 +19,15 @@ func TestRun(t *testing.T) {
 		stdout, stderr string
 	}{
 		{"version", []string{"version"}, 0, "aken-relay dev (", ""},
+		{"long version", []string{"--version"}, 0, "aken-relay dev (", ""},
+		{"short version", []string{"-V"}, 0, "aken-relay dev (", ""},
 		{"help", []string{"help"}, 0, usage, ""},
 		{"short help", []string{"-h"}, 0, usage, ""},
 		{"long help", []string{"--help"}, 0, usage, ""},
 		{"no args", nil, 2, "", usage},
 		{"unknown", []string{"bogus"}, 2, "", "aken-relay: unknown command \"bogus\"\nRun \"aken-relay help\" for usage.\n"},
 		{"serve help", []string{"serve", "--help"}, 0, serveUsage, ""},
+		{"help serve", []string{"help", "serve"}, 0, serveUsage, ""},
 		{"invalid flag", []string{"serve", "--bogus"}, 2, serveUsage, "flag provided but not defined: -bogus\n"},
 		{"invalid integer", []string{"serve", "--creates-per-hour", "x"}, 2, serveUsage, "invalid value"},
 		{"unexpected argument", []string{"serve", "extra"}, 2, "", "aken-relay: unexpected arguments\n"},
@@ -34,14 +40,14 @@ func TestRun(t *testing.T) {
 		{"requests", []string{"serve", "--requests-per-minute", "0"}, 2, "", "aken-relay: limits must be positive\n"},
 		{"creates", []string{"serve", "--creates-per-hour", "-1"}, 2, "", "aken-relay: limits must be positive\n"},
 		{"capacity", []string{"serve", "--max-live-sessions", "0"}, 2, "", "aken-relay: limits must be positive\n"},
-		{"environment", []string{"serve", "--store", "r2"}, 1, "", "aken-relay: missing AKEN_R2_ACCOUNT_ID\n"},
+		{"environment", []string{"serve", "--store", "r2"}, 1, "", "aken-relay: missing environment variables: AKEN_R2_ACCOUNT_ID, AKEN_R2_BUCKET\n"},
 		{"listen", []string{"serve", "--listen", "invalid"}, 1, "", "aken-relay: address invalid:"},
 		{"admin help", []string{"admin", "--help"}, 0, adminUsage, ""},
 		{"admin missing", []string{"admin"}, 2, "", adminUsage},
 		{"admin unknown", []string{"admin", "bogus", "id"}, 2, "", adminUsage},
 		{"admin id missing", []string{"admin", "delete-session"}, 2, "", adminUsage},
-		{"admin id invalid", []string{"admin", "delete-session", "invalid"}, 2, "", "aken-relay: invalid session id\n"},
-		{"admin env", []string{"admin", "delete-session", strings.Repeat("a", 32)}, 1, "", "aken-relay: missing AKEN_R2_ACCOUNT_ID\n"},
+		{"admin id invalid", []string{"admin", "delete-session", "invalid"}, 2, "", "aken-relay: invalid session id: expected 32 lowercase hexadecimal characters\n"},
+		{"admin env", []string{"admin", "delete-session", strings.Repeat("a", 32)}, 1, "", "aken-relay: missing environment variables: AKEN_R2_ACCOUNT_ID, AKEN_R2_BUCKET\n"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer

@@ -25,6 +25,13 @@ func TestRun(t *testing.T) {
 		stdout string
 		stderr string
 	}{
+		{"long version", []string{"--version"}, 1000, 0, "aken dev (", ""},
+		{"short version", []string{"-V"}, 1000, 0, "aken dev (", ""},
+		{"help collect", []string{"help", "collect"}, 0, 0, collectUsage, ""},
+		{"help serve", []string{"help", "serve"}, 0, 0, serveUsage, ""},
+		{"bad category", []string{"collect", "--unit", "api", "--keep-category", "X"}, 1000, 2, "", "aken: unknown redaction category \"X\"; use one of: secret token jwt key ip email phone name address\n"},
+		{"relative allow", []string{"collect", "--unit", "api", "--allow", "logs"}, 1000, 2, "", "aken: --allow directory must be absolute\n"},
+		{"bad relay", []string{"collect", "--unit", "api", "--relay", "http://example.com"}, 1000, 2, "", "aken: invalid relay URL"},
 		{"version", []string{"version"}, 1000, 0, "aken dev (", ""},
 		{"help", []string{"help"}, 1000, 0, usage, ""},
 		{"long help", []string{"--help"}, 1000, 0, usage, ""},
@@ -34,7 +41,7 @@ func TestRun(t *testing.T) {
 		{"collect help", []string{"collect", "--help"}, 1000, 0, collectUsage, ""},
 		{"root help", []string{"collect", "--help"}, 0, 0, collectUsage, ""},
 		{"short collect help", []string{"collect", "-h"}, 0, 0, collectUsage, ""},
-		{"root", []string{"collect"}, 0, 1, "", "aken: refusing to run as root"},
+		{"root", []string{"collect", "--unit", "api"}, 0, 1, "", "aken: refusing to run as root"},
 		{"collect", []string{"collect"}, 1000, 2, "", "aken: at least one source is required\n"},
 		{"dry run", []string{"collect", "--dry-run", "--file", path, "--allow", dir}, 1000, 0, "aken collect --dry-run: nothing will be uploaded", ""},
 		{"positional", []string{"collect", "extra"}, 1000, 2, "", "aken: unexpected positional arguments"},
@@ -46,7 +53,7 @@ func TestRun(t *testing.T) {
 		{"bad retention", []string{"collect", "--file", path, "--retention", "-1h"}, 1000, 2, "", "aken: --retention"},
 		{"bad unit", []string{"collect", "--unit", "--help"}, 1000, 2, "", "aken: invalid unit name"},
 		{"bad container", []string{"collect", "--container", "a b"}, 1000, 2, "", "aken: invalid container name"},
-		{"invalid flag", []string{"collect", "--bogus"}, 1000, 2, collectUsage, "flag provided but not defined: -bogus\n"},
+		{"invalid flag", []string{"collect", "--bogus"}, 1000, 2, "", "aken: flag provided but not defined: -bogus. Run \"aken collect --help\".\n"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			geteuid = func() int { return tt.uid }
@@ -76,8 +83,10 @@ func TestServeFlags(t *testing.T) {
 		want      string
 	}{
 		{"help", []string{"--help"}, 1000, 0, serveUsage},
-		{"root before flags", []string{"--bogus"}, 0, 1, "refusing to run as root"},
-		{"root help", []string{"--help"}, 0, 1, "refusing to run as root"},
+		{"root bad flags", []string{"--bogus"}, 0, 2, "aken: flag provided but not defined: -bogus. Run \"aken serve --help\".\n"},
+		{"root help", []string{"--help"}, 0, 0, serveUsage},
+		{"root level", []string{"--level", "5"}, 0, 2, "aken: --level must be 0 or 1\n"},
+		{"root", nil, 0, 1, "aken: refusing to run as root. The installed aken command switches to the aken user for you: run sudo aken serve. From a source build, run it as any unprivileged user.\n"},
 		{"unknown flag", []string{"--exec"}, 1000, 2, "flag provided but not defined"},
 		{"positional", []string{"extra"}, 1000, 2, "unexpected positional arguments"},
 		{"bad level", []string{"--level", "2"}, 1000, 2, "--level must be"},
@@ -87,6 +96,7 @@ func TestServeFlags(t *testing.T) {
 		{"bad ttl", []string{"--ttl", "x"}, 1000, 2, "invalid value"},
 		{"negative retention", []string{"--retention", "-1h"}, 1000, 2, "--retention must not"},
 		{"relative scope", []string{"--allow", "logs"}, 1000, 2, "--allow directory must be absolute"},
+		{"category", []string{"--keep-category", "X"}, 1000, 2, "aken: unknown redaction category \"X\"; use one of: secret token jwt key ip email phone name address\n"},
 		{"bad relay", []string{"--relay", "http://example.com"}, 1000, 2, "invalid relay URL"},
 		{"terminal", nil, 1000, 1, "aken: serve needs a terminal"},
 		{"all flags", []string{"--level", "0", "--ttl", "24h", "--relay", "https://relay.aken.dev", "--allow", "/tmp", "--allow", "/srv", "--keep", "value", "--keep-category", "email", "--rules", "/tmp/rules", "--state-dir", "/tmp/state", "--retention", "0"}, 1000, 1, "aken: serve needs a terminal"},
@@ -95,7 +105,7 @@ func TestServeFlags(t *testing.T) {
 			geteuid = func() int { return tt.uid }
 			var out, errs bytes.Buffer
 			code := run(append([]string{"serve"}, tt.args...), &out, &errs)
-			if code != tt.code || !strings.Contains(out.String()+errs.String(), tt.want) {
+			if code != tt.code || !strings.Contains(out.String()+errs.String(), tt.want) || (code != 0 && out.Len() != 0) || (code == 0 && errs.Len() != 0) {
 				t.Fatalf("exit %d; stdout %q; stderr %q", code, out.String(), errs.String())
 			}
 		})

@@ -2,8 +2,8 @@
 
 ## Install
 
-On your own Linux or Apple Silicon Mac machine, install `aken-mcp` with
-Node 18 or later:
+On your own Linux x64 (amd64) or arm64 machine, or Apple Silicon Mac,
+install `aken-mcp` with Node 18 or later:
 
 ```sh
 npm install -g aken-mcp
@@ -53,6 +53,24 @@ If the collector used a non-default relay, pass the same URL when joining:
 aken-mcp join --relay <URL>
 ```
 
+If you submit an empty line or stdin closes without a token, `join` exits 1 with:
+
+```text
+aken-mcp: no token given; paste the token that aken serve or aken collect printed on your server
+```
+
+If lowercasing the token makes it valid, `join` exits 1 with:
+
+```text
+aken-mcp: invalid token: it contains capital letters; copy it again from the server terminal
+```
+
+For any other malformed token, `join` exits 1 with:
+
+```text
+aken-mcp: invalid token: a token is akn1_ followed by 52 lowercase letters and digits; copy the whole line from the server terminal
+```
+
 The token is validated and the session checked with the relay. A successful
 join for a one-shot artifact prints:
 
@@ -82,11 +100,12 @@ aken-mcp: join rejected: bad authentication
 If the relay answers 404, `join` exits 1 with:
 
 ```text
-aken-mcp: no artifact for this token on <relay>: it expired, was deleted, or the upload did not finish
+aken-mcp: no artifact for this token on <relay>: it expired, was deleted, or the upload did not finish; if the collector used another relay, join with aken-mcp join --relay <URL>
 ```
 
-The MCP stores the session at `~/.config/aken/session.json` on Linux and
-`~/Library/Application Support/aken/session.json` on macOS. The directory is mode `0700` and the file is mode `0600`.
+The MCP stores the session at `$XDG_CONFIG_HOME/aken/session.json` on Linux
+when `XDG_CONFIG_HOME` is set, or `~/.config/aken/session.json` otherwise.
+On macOS, it uses `~/Library/Application Support/aken/session.json`. The directory is mode `0700` and the file is mode `0600`.
 Unlike the collector's local copy, this file contains the token. A one-shot
 session uses this version 2 form:
 
@@ -117,16 +136,35 @@ Check the current session, mode, and expiry:
 aken-mcp status
 ```
 
+Status prints `mode one-shot` or `mode live`. If the session has expired, the
+line ends with `(expired; run aken-mcp join with a new token)`.
+If no session is saved, `status` and `end` exit 1 with
+`aken-mcp: no session; run aken-mcp join and paste the token from your server`.
+If the session file is malformed, they exit 1 with
+`aken-mcp: session: malformed session file <path>; run aken-mcp join again to replace it`.
+
 To delete either kind of session on the relay and forget the local session:
 
 ```sh
 aken-mcp end
 ```
 
+If the relay answers 404, `end` prints
+`Session <sid> was already gone from the relay; forgot it locally.`
+
 Ending the session deletes the session file. For a live session, `end` prints
 `Ended live session <sid>; the collector's aken serve stops on its next poll.`
 and the collector ends with `aken: the session was ended on the relay`. This does not remove the collector's local copy
 or content already present in an agent transcript.
+
+`aken-mcp --version` and `aken-mcp -V` print the same version as
+`aken-mcp version`. Use `aken-mcp help <cmd>` or `aken-mcp <cmd> --help`
+for command help. An unknown command exits 2 with
+`aken-mcp: unknown command "<name>". Run "aken-mcp help".`
+Flag errors include the cause, such as
+`aken-mcp: flag provided but not defined: -bogus`.
+If the flag error contains `akn1_`, it prints `aken-mcp: invalid flags` to avoid
+exposing a token. When the client closes stdin, `aken-mcp serve` exits 0 silently.
 
 ## Claude Code
 
@@ -185,7 +223,26 @@ same original value, so the agent can correlate occurrences without recovering
 the value. For artifact tools, `lines_redacted` counts returned lines containing
 placeholders, not replaced values.
 
-At connection time, the server sends workflow guidance. For artifacts, start
+At startup, `aken-mcp serve` loads the session file and prepends one line to
+its instructions. For a live session, the line is:
+
+```text
+Current session: live session <sid>, expires <RFC 3339>. Use list_dir, read_file, search_files, tail_file, journal, docker_logs, systemctl_status, ps, df and plan.
+```
+
+For a one-shot artifact, the line is:
+
+```text
+Current session: one-shot artifact <sid>, expires <RFC 3339>. Use summary, sources, search, tail, read and context.
+```
+
+If the session file is missing or unreadable, the line is:
+
+```text
+No session is joined yet: ask the human to run aken-mcp join on their machine.
+```
+
+At connection time, the server also sends workflow guidance. For artifacts, start
 with `summary`, then `sources`; use RE2 `search` with before/after context,
 `context` around a
 line number, and `read` for exact ranges of at most 500 lines, continuing with
@@ -219,6 +276,10 @@ path scope. See [Live sessions](serve.md#levels) for result review at each level
 | `result` | `id` required | Waits for a job result after an earlier call timed out |
 
 Paths, globs, regexes, times, cursors, units, containers, and IDs are strings.
+Use absolute paths and globs inside the session scope. Set `unit` to a systemd
+service unit name and `container` to a Docker container name or ID.
+For `search_files.since`, use a duration or RFC 3339 time to search only files
+modified since that time. A `cursor` continues the previous result.
 The [catalog](serve.md#the-catalog) lists commands, output shapes, and limits.
 Every result carries at most 256 KiB of line text. Continue `read_file` with
 `next` as `from`; pass `next` as `cursor` for `search_files`, `journal`, or
@@ -236,8 +297,9 @@ inspect. Neither count establishes that the result is free of sensitive data.
 
 ### Plan
 
-Call `plan` with catalog names, including `search` and `tail` rather than their
-MCP names `search_files` and `tail_file`. For example:
+Call `plan` with catalog names. It also accepts `search_files` as an alias for
+`search` and `tail_file` as an alias for `tail`. The submitted jobs use the
+catalog names. For example:
 
 ```json
 {
@@ -247,6 +309,10 @@ MCP names `search_files` and `tail_file`. For example:
   ]
 }
 ```
+
+An unknown name returns
+`jobs[<index>]: unknown catalog name "<name>"; use list_dir, read_file, search, tail, journal, docker_logs, systemctl_status, ps or df`.
+The index starts at 0, matching the JSON array.
 
 A plan cannot contain another plan. At level 1, one approval covers all its
 jobs. Denying the plan gives every job a `denied` result. The MCP assigns IDs
@@ -271,6 +337,10 @@ Call `result` with the reported ID to wait for that result:
 ```json
 {"id": "j7"}
 ```
+
+If the ID's job sequence is at or above the saved `next_job_seq`, `result`
+returns immediately with
+`unknown job id <id>: ids come from earlier tool calls in this session`.
 
 Results are cached by ID. `denied`, `rejected`, and `error` results return
 `isError: true` with `status` and `error` so the agent can see the reason.
@@ -306,6 +376,8 @@ Line numbers start at 1 within each source.
 | `context` | `source` required; `line` integer >= 1 required; `around` integer 0..200 default 20 | `line: text` | `{"lines": n, "lines_redacted": n, "first_line": n, "last_line": n}` |
 | `join` (only with `--allow-chat-join`) | `token` required | `Joined session <sid>. The artifact expires at <t>. This token has been in the chat transcript.` | `{"session_id": "...", "expires_at": "..."}` |
 
+For file sources, `sources` prints `-` for an empty time window or note.
+
 Every tool result has two `text` content items: the lines, then a JSON object
 on one line with the metadata in the table. `lines_redacted` counts returned
 lines containing at least one placeholder. It does not count replaced values
@@ -321,7 +393,7 @@ It validates the manifest and verifies chunk hashes. The artifact stays in
 memory for the life of the process or until `join` replaces the session.
 
 Tool failures, such as an expired artifact, bad regex, unknown source, or bad
-cursor, return `isError: true`.
+cursor, return `isError: true`. A bad regex returns `regex: <error from regexp.Compile>`.
 
 ## Chat join
 

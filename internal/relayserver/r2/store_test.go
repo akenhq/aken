@@ -31,9 +31,18 @@ func TestConfigFromEnv(t *testing.T) {
 	}
 	for _, name := range names {
 		t.Setenv(name, "")
-		if _, err := ConfigFromEnv(); err == nil || err.Error() != "missing "+name {
+		if _, err := ConfigFromEnv(); err == nil || err.Error() != "missing environment variables: "+name {
 			t.Fatalf("error = %v", err)
 		}
+		t.Setenv(name, "value")
+	}
+	for i, name := range names {
+		t.Setenv(name, "")
+		if _, err := ConfigFromEnv(); err == nil || err.Error() != "missing environment variables: "+strings.Join(names[:i+1], ", ") {
+			t.Fatalf("error = %v", err)
+		}
+	}
+	for _, name := range names {
 		t.Setenv(name, "value")
 	}
 	cfg, err := ConfigFromEnv()

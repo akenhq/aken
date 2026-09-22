@@ -45,6 +45,8 @@ const serveUsage = `Usage: aken-relay serve [flags]
   --allowance-mode MODE     off, observe or enforce (default off)
   --allowance-servers N     Servers per developer address (default 2)
   --allowance-window D      Rolling allowance window (default 24h)
+
+Clients accept plain http:// only on loopback. For remote clients, terminate TLS in a reverse proxy or tunnel in front of --listen.
 `
 
 const adminUsage = "Usage: aken-relay admin delete-session <session id>\n"
@@ -58,9 +60,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	switch args[0] {
 	case "help", "-h", "--help":
+		if args[0] == "help" && len(args) == 2 && args[1] == "serve" {
+			_, _ = fmt.Fprint(stdout, serveUsage)
+			return 0
+		}
 		_, _ = fmt.Fprint(stdout, usage)
 		return 0
-	case "version":
+	case "version", "--version", "-V":
 		_, _ = fmt.Fprintln(stdout, buildinfo.String("aken-relay"))
 		return 0
 	case "serve":
@@ -132,7 +138,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		id, ok := protocol.ParseSessionID(args[2])
 		if !ok {
-			_, _ = fmt.Fprintln(stderr, "aken-relay: invalid session id")
+			_, _ = fmt.Fprintln(stderr, "aken-relay: invalid session id: expected 32 lowercase hexadecimal characters")
 			return 2
 		}
 		cfg, err := r2.ConfigFromEnv()

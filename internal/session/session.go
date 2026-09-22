@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -26,7 +27,7 @@ type Session struct {
 	JoinedVia     string    `json:"joined_via"`
 }
 
-var ErrNoSession = errors.New("session: no session; run: aken-mcp join <token>")
+var ErrNoSession = errors.New("no session; run aken-mcp join and paste the token from your server")
 
 func DefaultPath() (string, error) {
 	dir, err := os.UserConfigDir()
@@ -44,31 +45,32 @@ func Load(path string) (Session, error) {
 	if err != nil {
 		return Session{}, err
 	}
+	malformed := fmt.Errorf("session: malformed session file %s; run aken-mcp join again to replace it", path)
 	var s Session
 	if json.Unmarshal(data, &s) != nil || (s.Version != 1 && s.Version != 2) || s.Relay == "" || s.ExpiresAt.IsZero() || s.JoinedAt.IsZero() || (s.JoinedVia != "cli" && s.JoinedVia != "chat") {
-		return Session{}, errors.New("session: malformed session file")
+		return Session{}, malformed
 	}
 	if s.Version == 1 || s.Mode == "" {
 		s.Mode = "blob"
 	}
 	if s.Mode != "blob" && s.Mode != "session" {
-		return Session{}, errors.New("session: malformed session mode")
+		return Session{}, malformed
 	}
 	if s.Live() {
 		if _, err := s.ParsedContentRoot(); err != nil {
-			return Session{}, err
+			return Session{}, malformed
 		}
 		if s.NextJobSeq < 1 || s.NextResultSeq < 1 || s.NextJobSeq > protocol.MaxSessionSeq+1 || s.NextResultSeq > protocol.MaxSessionSeq+1 {
-			return Session{}, errors.New("session: malformed sequence counters")
+			return Session{}, malformed
 		}
 	}
 	token, err := s.ParsedToken()
 	if err != nil {
-		return Session{}, err
+		return Session{}, malformed
 	}
 	defer token.Zero()
 	if token.SessionID().String() != s.SessionID {
-		return Session{}, errors.New("session: session id mismatch")
+		return Session{}, malformed
 	}
 	return s, nil
 }

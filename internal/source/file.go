@@ -25,6 +25,7 @@ type Files struct {
 	Allowed       []string
 	Tail          int
 	ModifiedAfter time.Time
+	Stderr        io.Writer
 }
 
 func (f Files) Open(path string) (*os.File, error) {
@@ -46,7 +47,8 @@ func (f Files) Open(path string) (*os.File, error) {
 	return nil, errors.New("path is outside the allowed directories (/var/log; add --allow DIR)")
 }
 func (f Files) ReadFile(path string) (*Source, error) {
-	return f.readFile(path, nil)
+	s, err := f.readFile(path, nil)
+	return s, f.fileError(path, err)
 }
 func (f Files) readFile(path string, seen map[string]bool) (*Source, error) {
 	file, err := f.Open(path)
@@ -59,7 +61,7 @@ func (f Files) readFile(path string, seen map[string]bool) (*Source, error) {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() {
-		return nil, errors.New("source is not a regular file")
+		return nil, errNotRegular
 	}
 	canonical, err := filepath.EvalSymlinks(path)
 	if err != nil {
@@ -104,6 +106,46 @@ func (f Files) readFile(path string, seen map[string]bool) (*Source, error) {
 	}
 	return s, nil
 }
+
+var errNotRegular = errors.New("not a regular file")
+
+func (f Files) fileReason(err error) string {
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		err = pathErr.Err
+	}
+	if err.Error() == "path escapes from parent" {
+		return "it is a symlink that leaves the allowed directories (" + strings.Join(f.Allowed, ", ") + ")"
+	}
+	return err.Error()
+}
+
+func (f Files) fileError(path string, err error) error {
+	if err == nil {
+		return nil
+	}
+	var pathErr *os.PathError
+	if !errors.As(err, &pathErr) && !errors.Is(err, errNotRegular) {
+		return err
+	}
+	reason := f.fileReason(err)
+	if strings.HasPrefix(reason, "it is a symlink") {
+		return fmt.Errorf("refusing %s: %s", path, reason)
+	}
+	return fmt.Errorf("cannot read %s: %s", path, reason)
+}
+
+func (f Files) skip(path string, err error) bool {
+	reason := f.fileReason(err)
+	if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, os.ErrPermission) && !errors.Is(err, errNotRegular) && !strings.HasPrefix(reason, "it is a symlink") {
+		return false
+	}
+	if f.Stderr != nil {
+		_, _ = fmt.Fprintf(f.Stderr, "aken: skipped %s: %s\n", path, reason)
+	}
+	return true
+}
+
 func readTail(file *os.File, size int64, n int) ([]byte, error) {
 	var blocks [][]byte
 	var total, newlines int
@@ -139,19 +181,32 @@ func (f Files) glob(pattern string, seen map[string]bool) ([]*Source, error) {
 	for _, path := range matches {
 		file, err := f.Open(path)
 		if err != nil {
-			return nil, err
+			if f.skip(path, err) {
+				continue
+			}
+			return nil, f.fileError(path, err)
 		}
 		info, err := file.Stat()
 		_ = file.Close()
 		if err != nil {
-			return nil, err
+			if f.skip(path, err) {
+				continue
+			}
+			return nil, f.fileError(path, err)
 		}
-		if !info.Mode().IsRegular() || info.ModTime().Before(f.ModifiedAfter) {
+		if !info.Mode().IsRegular() {
+			f.skip(path, errNotRegular)
+			continue
+		}
+		if info.ModTime().Before(f.ModifiedAfter) {
 			continue
 		}
 		s, err := f.readFile(path, seen)
 		if err != nil {
-			return nil, err
+			if f.skip(path, err) {
+				continue
+			}
+			return nil, f.fileError(path, err)
 		}
 		if s != nil {
 			sources = append(sources, s)

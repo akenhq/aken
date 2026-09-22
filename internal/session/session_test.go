@@ -70,7 +70,7 @@ func TestMalformed(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, err := Load(path)
-		if err == nil || strings.Contains(err.Error(), "private") {
+		if err == nil || err.Error() != "session: malformed session file "+path+"; run aken-mcp join again to replace it" {
 			t.Fatalf("unsafe or missing error: %v", err)
 		}
 	}
@@ -161,7 +161,7 @@ func TestLiveSession(t *testing.T) {
 		if err := os.WriteFile(path, raw, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := Load(path); err == nil || strings.Contains(err.Error(), "private") {
+		if _, err := Load(path); err == nil || err.Error() != "session: malformed session file "+path+"; run aken-mcp join again to replace it" {
 			t.Fatalf("unsafe or missing error: %v", err)
 		}
 	}

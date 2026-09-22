@@ -142,13 +142,15 @@ func (l *Limiter) Middleware(next http.Handler) http.Handler {
 			return
 		}
 		code := "over_capacity"
+		message := "the relay is at capacity; retry later"
 		if status == http.StatusTooManyRequests {
 			code = "rate_limited"
+			message = fmt.Sprintf("too many requests from this address; retry in %ds", retry)
 			w.Header().Set("Retry-After", strconv.Itoa(retry))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(protocol.ErrorResponse{Error: code})
+		_ = json.NewEncoder(w).Encode(protocol.ErrorResponse{Error: code, Message: message})
 	})
 }
 

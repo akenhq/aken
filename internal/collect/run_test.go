@@ -46,6 +46,11 @@ func TestRunDecisions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			o := testOptions(t, "from 203.0.113.5\n")
 			o.DryRun = tt.dry
+			if !tt.dry && tt.interactive {
+				server := httptest.NewServer(relay.NewHandler(relay.NewMemoryStore(), relay.Options{}))
+				defer server.Close()
+				o.RelayURL = server.URL
+			}
 			var stdout, stderr bytes.Buffer
 			code := Run(context.Background(), o, screen.NewInput(strings.NewReader(tt.input), -1, tt.interactive), &stdout, &stderr, 40)
 			if code != tt.code || !strings.Contains(stderr.String(), tt.want) {
@@ -105,7 +110,16 @@ func TestUploadRoundTrip(t *testing.T) {
 			}
 			o := testOptions(t, body)
 			handler := relay.NewHandler(relay.NewMemoryStore(), relay.Options{Now: o.Now})
-			server := httptest.NewServer(handler)
+			infoRequests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v0/info" {
+					infoRequests++
+					if r.Header.Get("Authorization") != protocol.AuthorizationHeader([32]byte{}) {
+						t.Error("preflight has credentials")
+					}
+				}
+				handler.ServeHTTP(w, r)
+			}))
 			defer server.Close()
 			o.RelayURL = server.URL
 			// Both explicit duplicates and glob aliases must produce a single source.
@@ -121,6 +135,9 @@ func TestUploadRoundTrip(t *testing.T) {
 			}
 			if code := Run(context.Background(), o, screen.NewInput(strings.NewReader(input), -1, true), &out, &errs, 40); code != 0 {
 				t.Fatalf("code %d: %s", code, errs.String())
+			}
+			if infoRequests != 1 {
+				t.Fatalf("info requests = %d", infoRequests)
 			}
 			encoded := regexp.MustCompile(`akn1_[a-z2-7]{52}`).FindString(out.String())
 			token, err := protocol.ParseToken(encoded)
@@ -265,7 +282,7 @@ func TestUploadFailures(t *testing.T) {
 					} else {
 						caps.TTLMaxSeconds = 1
 					}
-					_ = json.NewEncoder(w).Encode(protocol.Info{Caps: caps})
+					_ = json.NewEncoder(w).Encode(protocol.Info{ProtocolVersions: []int{1}, Caps: caps})
 					return
 				}
 				fail := r.Method == http.MethodPut && (stage == "create" && !strings.Contains(r.URL.Path, "/blob/") || stage == "chunk" && strings.Contains(r.URL.Path, "/chunks/") || stage == "manifest" && strings.HasSuffix(r.URL.Path, "/manifest"))
@@ -291,6 +308,9 @@ func TestUploadFailures(t *testing.T) {
 			if strings.Contains(out.String(), "akn1_") {
 				t.Fatal("printed token on failure")
 			}
+			if got := strings.Contains(errs.String(), "Nothing was uploaded; run the same command again.\n"); got != (stage != "manifest") {
+				t.Fatal(errs.String())
+			}
 			if stage == "chunk" || stage == "manifest" || stage == "local" {
 				if !strings.Contains(errs.String(), "aken: upload failed:") || !strings.Contains(errs.String(), "nothing readable reached the relay") {
 					t.Fatal("missing upload failure message", errs.String())
@@ -304,6 +324,9 @@ func TestPruneAndDryRun(t *testing.T) {
 		t.Run(fmt.Sprint(dry), func(t *testing.T) {
 			o := testOptions(t, "line\n")
 			o.DryRun = dry
+			server := httptest.NewServer(relay.NewHandler(relay.NewMemoryStore(), relay.Options{}))
+			defer server.Close()
+			o.RelayURL = server.URL
 			runs := filepath.Join(o.StateDir, "runs")
 			for _, name := range []string{"20200101T000000Z-old", "20260912T140411Z-current", "unrelated", "not-a-timestamp-xxx"} {
 				if err := os.MkdirAll(filepath.Join(runs, name), 0o700); err != nil {
@@ -389,7 +412,25 @@ func TestCustomRulesAndDistinctFlags(t *testing.T) {
 	o.Files = []string{"/outside/allowed/scope"}
 	out.Reset()
 	errs.Reset()
-	if code := Run(context.Background(), o, screen.NewInput(strings.NewReader(""), -1, false), &out, &errs, 40); code != 1 || errs.String() != "aken: invalid rules JSON\n" {
+	if code := Run(context.Background(), o, screen.NewInput(strings.NewReader(""), -1, false), &out, &errs, 40); code != 1 || errs.String() != "aken: --rules: invalid rules JSON\n" {
 		t.Fatal(code, errs.String())
+	}
+}
+
+func TestPreflightBeforeSources(t *testing.T) {
+	o := testOptions(t, "line\n")
+	server := httptest.NewServer(http.NotFoundHandler())
+	o.RelayURL = server.URL
+	server.Close()
+	o.Files[0] = filepath.Join(o.Allow[0], "missing")
+	for _, interactive := range []bool{false, true} {
+		var out, errs bytes.Buffer
+		want := "aken: the review screen needs a terminal; use --dry-run to check a collection without one"
+		if interactive {
+			want = "aken: cannot reach the relay at " + o.RelayURL + ":"
+		}
+		if code := Run(t.Context(), o, screen.NewInput(strings.NewReader("s"), -1, interactive), &out, &errs, 40); code != 1 || !strings.HasPrefix(errs.String(), want) || out.Len() != 0 {
+			t.Fatalf("code %d: %s / %s", code, &out, &errs)
+		}
 	}
 }

@@ -13,7 +13,82 @@ to your server through Aken.
 catalog read jobs with terminal approvals at level 1 or preapproval at level 0.
 `aken collect` uploads one reviewed, redacted, encrypted artifact.
 `aken-mcp` supports both modes. The protocol and the code have not been
-professionally reviewed.
+professionally reviewed. The current release series is v0.x pre-release.
+
+## Quick start
+
+| On the server | On your machine |
+|---|---|
+| Install the collector. | Install the MCP and connect your agent. |
+| Start: `sudo aken serve`. | Join: `aken-mcp join`. |
+| Approve jobs in the terminal. | Ask the agent to investigate. |
+
+On the server, install the collector:
+
+```sh
+curl -fsSL https://aken.dev/install.sh | sudo bash
+```
+
+On your own machine, install the local MCP (Linux or Apple Silicon macOS)
+with Node 18 or later:
+
+```sh
+npm install -g aken-mcp
+```
+
+Without Node, use the [MCP installer](docs/install.md#install-the-mcp-on-your-machine).
+On your machine, register the MCP with Claude Code:
+
+```sh
+claude mcp add aken -- aken-mcp serve
+```
+
+For Codex CLI or Cursor, see [Use the local MCP](docs/mcp.md#install).
+See [Install](docs/install.md) for version selection and the collector's
+run-once option, or [Verify a release](docs/verify.md) for signature verification.
+
+Open a live session on the server. The `aken` command switches to the
+unprivileged `aken` user before the collector starts:
+
+```sh
+sudo aken serve
+```
+
+On your machine, run this and paste the printed token at the prompt:
+
+```sh
+aken-mcp join
+```
+
+On your machine, ask Claude Code:
+
+> Use the aken MCP to check the nginx journal for errors in the last hour. Propose a plan for any follow-up reads.
+
+Approve jobs or plans in the server terminal. The default level 1 sends
+redacted results automatically unless they have strings to inspect; those
+pause for send or drop. See [Live sessions](docs/serve.md) for levels and scope.
+
+For a one-shot artifact, run this on the server instead:
+
+```sh
+sudo aken collect --unit nginx --since 1h
+```
+
+Review the redacted content, then choose **send** to encrypt and upload it.
+Join its printed token with `aken-mcp join` on your machine. Then ask the
+agent to summarise the collected log and list its error lines.
+
+On your machine, check the session mode and expiry:
+
+```sh
+aken-mcp status
+```
+
+### Hosted relay
+
+The hosted relay at `relay.aken.dev` is free and needs no account. It is a
+best-effort service, and limits apply. See [Hosted relay](docs/relay.md#hosted-relay)
+for details, or [Run your own relay](docs/relay.md#choose-storage) to self-host.
 
 ## What is in this repository
 
@@ -44,82 +119,24 @@ make check
 `make build` puts the three binaries in `bin/`. `make check` runs lint, vet,
 tests, the dependency check and the reproducibility check.
 
-## Install and verify a release
+## Install a release
 
-See [docs/install.md](docs/install.md) to install and verify a release.
-
-## Quick start
-
-On the server, install the collector:
-
-```sh
-curl -fsSL https://aken.dev/install.sh | sudo bash
-```
-
-On your own machine, install the local MCP (Linux or Apple Silicon macOS)
-with Node 18 or later:
-
-```sh
-npm install -g aken-mcp
-```
-
-Without Node, use the [MCP installer](docs/install.md#install-the-mcp-on-your-machine).
-Register the MCP with Claude Code:
-
-```sh
-claude mcp add aken -- aken-mcp serve
-```
-
-For Codex CLI or Cursor, see [Use the local MCP](docs/mcp.md#install).
-See [Install and verify](docs/install.md) for signature verification,
-version selection, and the collector's run-once option.
-
-Open a live session on the server. The `aken` command switches to the
-unprivileged `aken` user before the collector starts:
-
-```sh
-sudo aken serve
-```
-
-On your machine, run this and paste the printed token at the prompt:
-
-```sh
-aken-mcp join
-```
-
-Then ask Claude Code:
-
-> Use the aken MCP to check the nginx journal for errors in the last hour. Propose a plan for any follow-up reads.
-
-Approve jobs or plans in the server terminal. The default level 1 sends
-redacted results automatically unless they have strings to inspect; those
-pause for send or drop. See [Live sessions](docs/serve.md) for levels and scope.
-
-For a one-shot artifact, run this on the server instead:
-
-```sh
-sudo aken collect --unit nginx --since 1h
-```
-
-Review the redacted content, then choose **send** to encrypt and upload it.
-Join its printed token with `aken-mcp join` on your machine. Then ask the
-agent to summarise the collected log and list its error lines.
-
-Check the session mode and expiry:
-
-```sh
-aken-mcp status
-```
+See [Install](docs/install.md) for setup and [Verify a release](docs/verify.md)
+for signature and checksum checks.
 
 ## Docs
 
-- [Install and verify](docs/install.md)
+- [Install](docs/install.md)
+- [Verify a release](docs/verify.md)
+- [Troubleshooting](docs/troubleshooting.md)
 - [Live sessions](docs/serve.md)
 - [Collect logs](docs/collect.md)
 - [Run your own relay](docs/relay.md)
 - [Docker logs](docs/docker.md)
 - [Redaction](docs/redaction.md)
 - [Use the local MCP](docs/mcp.md), including Claude Code, Codex CLI, and Cursor
+
+Changes: see the [release notes](https://github.com/akenhq/aken/releases).
 
 ## Security
 

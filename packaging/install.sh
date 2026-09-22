@@ -13,9 +13,12 @@ main() {
   usage() {
     cat <<'USAGE'
 Usage: install.sh [--version vX.Y.Z] [--once] [-- ] [collector arguments]
+       install.sh --uninstall [--purge]
 
   --version TAG   Install that release: fetch that release's own install.sh and run it with the same arguments.
   --once          Run the collector once and delete it afterwards (run.sh does this by default).
+  --uninstall     Remove the collector, launcher, and aken user; keep local state and configuration.
+  --purge         With --uninstall, also remove /var/lib/aken and /etc/aken.
   --help
 USAGE
   }
@@ -25,10 +28,8 @@ USAGE
     exit 1
   }
 
-  [[ "$AKEN_VERSION" != @* ]] ||
-    die 'install.sh: this copy is not rendered; download it from a release: https://github.com/akenhq/aken/releases'
-
   local VERSION="$AKEN_VERSION" mode="$AKEN_DEFAULT_MODE"
+  local uninstall='' purge=''
   while [[ "$#" -gt 0 ]]; do
     case "$1" in
       --help) usage; exit 0 ;;
@@ -41,11 +42,47 @@ USAGE
         shift 2
         ;;
       --once) mode=once; shift ;;
+      --uninstall) uninstall=1; shift ;;
+      --purge) purge=1; shift ;;
       --) shift; break ;;
       -*) usage >&2; exit 2 ;;
       *) break ;;
     esac
   done
+  if [[ ( -n "$purge" && -z "$uninstall" ) || ( -n "$uninstall" && ( "$mode" == once || "$#" -ne 0 ) ) ]]; then
+    usage >&2
+    exit 2
+  fi
+  [[ "$AKEN_VERSION" != @* ]] ||
+    die 'install.sh: this copy is not rendered; download it from a release: https://github.com/akenhq/aken/releases'
+
+  if [[ -n "$uninstall" ]]; then
+    [[ "$(id -u)" -eq 0 ]] || die 'install.sh --uninstall must run as root (sudo).'
+    local path
+    for path in /usr/local/bin/aken /usr/local/libexec/aken; do
+      if [[ -e "$path" || -L "$path" ]]; then
+        rm -f -- "$path"
+        printf 'Removed %s\n' "$path"
+      fi
+    done
+    if getent passwd aken >/dev/null; then
+      userdel aken
+      printf '%s\n' 'Removed the aken user.'
+    fi
+    for path in /var/lib/aken /etc/aken; do
+      if [[ -e "$path" || -L "$path" ]]; then
+        if [[ -n "$purge" ]]; then
+          rm -rf -- "$path"
+          printf 'Removed %s\n' "$path"
+        elif [[ "$path" == /var/lib/aken ]]; then
+          printf 'Kept %s (local audit copies and placeholder mappings). Remove it with: sudo rm -rf %s\n' "$path" "$path"
+        else
+          printf 'Kept %s (configuration). Remove it with: sudo rm -rf %s\n' "$path" "$path"
+        fi
+      fi
+    done
+    exit 0
+  fi
   [[ "$VERSION" =~ ^v[0-9][A-Za-z0-9._-]*$ ]] || die "Invalid release tag: $VERSION"
   if [[ "$mode" == install ]]; then
     if [[ "$#" -ne 0 ]]; then usage >&2; exit 2; fi
@@ -136,26 +173,29 @@ USAGE
     done
   fi
   OS=$(uname -s)
-  [[ "$OS" == Linux ]] || die "Unsupported operating system: $OS"
+  [[ "$OS" == Linux ]] || die "Unsupported operating system: $OS (supported: Linux amd64 and arm64)"
   MACHINE=$(uname -m)
   case "$MACHINE" in
     x86_64) ARCH=amd64; expected="$AKEN_SHA256_LINUX_AMD64" ;;
     aarch64) ARCH=arm64; expected="$AKEN_SHA256_LINUX_ARM64" ;;
-    *) die "Unsupported architecture: $MACHINE" ;;
+    *) die "Unsupported architecture: $MACHINE (supported: Linux amd64 and arm64)" ;;
   esac
   if [[ "$mode" == once ]]; then
     TMP_DIR=$(mktemp -d /tmp/aken-once.XXXXXX)
   else
     TMP_DIR=$(mktemp -d)
+    printf 'Downloading aken %s for linux/%s...\n' "$AKEN_VERSION" "$ARCH"
   fi
   curl -fsSL --proto "$proto" --proto-redir "$proto" --tlsv1.2 \
     "$release_url/$AKEN_VERSION/aken_linux_${ARCH}" -o "$TMP_DIR/aken_linux_${ARCH}" ||
     die "Could not download aken_linux_${ARCH}."
+  if [[ "$mode" == install ]]; then printf '%s\n' 'Verifying the checksum...'; fi
   if ! (cd "$TMP_DIR" && printf '%s  %s\n' "$expected" "aken_linux_${ARCH}" | sha256sum -c -); then
     die 'Release checksum verification failed.'
   fi
 
   if [[ "$mode" == install ]]; then
+    printf '%s\n' 'Installing /usr/local/libexec/aken and the launcher /usr/local/bin/aken...'
     install -d -o root -g root -m 0755 /usr/local/libexec
     install -o root -g root -m 0755 "$TMP_DIR/aken_linux_${ARCH}" /usr/local/libexec/aken
     # The launcher is packaging/launcher.sh, rendered in at release time. Started as root,
@@ -164,8 +204,14 @@ USAGE
 @LAUNCHER@
 AKEN_LAUNCHER
     install -o root -g root -m 0755 "$TMP_DIR/aken" /usr/local/bin/aken
+    local created='' created_state=''
+    if [[ ! -d /var/lib/aken ]]; then created_state=1; fi
     if ! getent passwd aken >/dev/null; then
+      printf '%s\n' 'Creating the aken user and /var/lib/aken...'
       useradd --system --user-group --home-dir /var/lib/aken --create-home --shell /usr/sbin/nologin aken
+      created='the aken user'
+    else
+      printf '%s\n' 'The aken user already exists.'
     fi
     chmod 0700 /var/lib/aken
     chown aken:aken /var/lib/aken
@@ -176,8 +222,15 @@ AKEN_LAUNCHER
       fi
     done
     /usr/local/bin/aken version
-    printf '%s\n' 'Run the collector with sudo. The aken command switches to the unprivileged aken user before the collector starts:' \
-      '  sudo aken collect --help'
+    printf 'Installed aken %s.\n' "$AKEN_VERSION"
+    if [[ -n "$created" ]]; then created+=" (groups: $(id -Gn aken))"; fi
+    if [[ -n "$created_state" ]]; then created+="${created:+, }/var/lib/aken"; fi
+    if [[ -n "$created" ]]; then printf 'Created: %s\n' "$created"; fi
+    printf '%s\n' 'Next:' \
+      '  sudo aken serve                             open a live session' \
+      '  sudo aken collect --dry-run --unit <unit>   try a collection without uploading' \
+      'Docs: https://github.com/akenhq/aken/tree/main/docs' \
+      'Uninstall: curl -fsSL https://aken.dev/install.sh | sudo bash -s -- --uninstall'
     exit 0
   fi
 

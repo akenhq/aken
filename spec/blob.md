@@ -108,7 +108,7 @@ The `redaction` object has these fields:
 |---|---|---|
 | `lines_redacted` | integer | Artifact lines with at least one replacement |
 | `by_category` | object | Category name to a count object |
-| `flags` | integer | Distinct high-entropy strings that matched no rule and are not hex ids or UUIDs |
+| `flags` | integer | Distinct high-entropy strings that matched no rule and are not hex ids or UUIDs (also excluding `name=value` strings whose value is a hex id or UUID and whose name matches `^[A-Za-z_][A-Za-z0-9_-]*$`) |
 | `rules` | integer | Active rules in the run |
 
 A category count object has integer fields `values` (distinct original values)

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/akenhq/aken/internal/screen"
+	"github.com/akenhq/aken/internal/source"
 	"github.com/akenhq/aken/protocol"
 	"github.com/akenhq/aken/relay"
 )
@@ -375,7 +377,7 @@ func TestLiveEnding(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("blocked at approval")
 		}
-		if got := h.errs.String(); got != "aken: the session was ended on the relay\n" {
+		if got := h.errs.String(); got != "aken: the session was ended on the relay: aken-mcp end ran on your machine, or the relay lost the session\n" {
 			t.Fatalf("stderr = %q", got)
 		}
 		if !strings.Contains(h.out.String(), "Session ended:") {
@@ -431,7 +433,7 @@ func TestUnsupportedRelayAndOptions(t *testing.T) {
 		if r.URL.Path != "/v0/info" {
 			t.Error("unexpected request", r.URL.Path)
 		}
-		_ = json.NewEncoder(w).Encode(protocol.Info{})
+		_ = json.NewEncoder(w).Encode(protocol.Info{ProtocolVersions: []int{1}})
 	}))
 	defer server.Close()
 	o := Options{TTL: time.Hour, RelayURL: server.URL, StateDir: t.TempDir()}
@@ -444,6 +446,34 @@ func TestUnsupportedRelayAndOptions(t *testing.T) {
 		change(&bad)
 		if validate(bad) == nil {
 			t.Fatal("accepted invalid options")
+		}
+	}
+}
+
+func TestEmptyCommandResults(t *testing.T) {
+	originalJournal, originalExec := readJournal, execCommand
+	t.Cleanup(func() { readJournal, execCommand = originalJournal, originalExec })
+	readJournal = func(context.Context, source.Spec, time.Time, time.Time) (*source.Source, error) {
+		return &source.Source{Stderr: "No journal files were found."}, nil
+	}
+	execCommand = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, os.Args[0], "-test.run=^TestCommandHelper$", "--", "--serve-command-helper", "stderr", "4")
+	}
+	h := startLive(t, 0, strings.NewReader(""), time.Hour)
+	h.join(t, "cli", false)
+	for _, tt := range []struct {
+		name    string
+		params  any
+		command string
+	}{
+		{"journal", protocol.JournalParams{Unit: "api"}, "journalctl"},
+		{"docker_logs", protocol.DockerLogsParams{Container: "abcdef123456"}, "journalctl"},
+		{"systemctl_status", protocol.SystemctlStatusParams{Unit: "api"}, "systemctl"},
+	} {
+		h.post(t, job("j1", tt.name, tt.params), 1)
+		r := h.results(t, 1)[0]
+		if r.Status != "error" || r.Error != tt.command+": No journal files were found." || len(r.Lines) != 0 {
+			t.Fatalf("%s: %+v", tt.name, r)
 		}
 	}
 }
